@@ -1,0 +1,8 @@
+#!/bin/bash
+# Chromium is started by XFCE autostart (for D-Bus reasons), so supervisorctl
+# cannot restart it. This does.
+set -euo pipefail
+pkill -f 'remote-debugging-port' || true
+sleep 1
+DISPLAY=:1 nohup /usr/local/bin/start-chromium.sh >/tmp/chromium.log 2>&1 &
+echo "Chromium restarting; CDP on 127.0.0.1:${CDP_PORT:-9222}"

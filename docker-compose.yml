@@ -1,0 +1,54 @@
+services:
+  claude-desktop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Bump to pick up upstream fixes after Anthropic changes the
+        # Claude Desktop installer format.
+        CLAUDE_DEB_REF: main
+    image: claude-vnc-desktop:latest
+    container_name: claude-vnc-desktop
+    # Stable hostname: Chromium writes the hostname into the profile's
+    # SingletonLock. A fresh random hostname each recreate would make every
+    # leftover lock look like it belongs to a live browser elsewhere.
+    hostname: claude-vnc-desktop
+
+    env_file:
+      - .env
+
+    ports:
+      # KasmVNC web desktop. Loopback-bound for two reasons, both load-bearing:
+      # it is plain HTTP behind basic auth, AND browsers only treat localhost
+      # as a secure context -- which is what allows navigator.clipboard, and
+      # therefore seamless copy/paste, to work at all. Publishing this on a
+      # LAN address would break the clipboard as well as the security model.
+      - "127.0.0.1:6080:6080"
+      # No raw RFB port: KasmVNC authenticates the web path with a real
+      # username/password, where raw VNC auth caps at 8 characters.
+
+    volumes:
+      # Single home volume: Claude Desktop login, both browser profiles and
+      # their extensions, Claude Code auth, shell history -- everything.
+      # Reset the whole environment with: docker compose down -v
+      - claude-home:/home/claude
+      # Your code. Edit on the host, run it in the container.
+      - ./workspace:/workspace
+
+    # Chromium and Electron crash on Docker's default 64MB /dev/shm.
+    shm_size: "2gb"
+
+    # Reaping zombie processes; tini handles PID 1 duties inside.
+    init: false
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/ | grep -qE '200|401'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  claude-home:
