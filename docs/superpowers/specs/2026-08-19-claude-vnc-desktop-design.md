@@ -146,3 +146,20 @@ Changes:
 Verified: all scripts `0755` in the image; all four services running, including the two that previously failed; HTTPS returns 401 unauthenticated and 200 authenticated; the served certificate carries `DNS:localhost, IP:127.0.0.1` plus the configured SANs; and the fingerprint is unchanged after `docker compose restart`.
 
 Not verified: the host-to-container copy/paste round trip itself, which needs a human at a browser.
+
+## Amendment 2026-08-20: ntfy MCP configuration no longer depends on environment inheritance
+
+Reported as the MCP tool failing with "NTFY_TOPIC is not set in the container environment" while the variable was plainly present in a shell opened in the same container.
+
+The container environment was correct. The problem is that the MCP server is not a child of the container's init: Claude Desktop spawns it, and Claude Desktop is started by XFCE autostart, under `xfce4-session`, under `dbus-launch`, under supervisord. Every link has to forward the environment, and Electron does not reliably do so.
+
+The failure mode is worth naming because it misdirects: a shell opened with `docker exec` receives the container environment directly, so the variable looks present, while the MCP server four levels down does not have it. That makes it read as a container misconfiguration when the container is fine.
+
+Attempting to confirm which link dropped it by diffing `/proc/<pid>/environ` against pid 1 does not work either: Docker drops `CAP_SYS_PTRACE`, so even root inside the container gets `Permission denied`. Rather than chase the specific link, the dependency was removed.
+
+- The entrypoint writes `NTFY_TOPIC`/`NTFY_SERVER`/`NTFY_TOKEN` to `~/.config/ntfy-mcp.env`, mode `0600` — the topic is the only access control on public ntfy.sh, so it is treated as a secret, not as configuration.
+- `_config()` reads the environment first and falls back to that file, returning which source it used. Because config is read per tool call, editing the file takes effect on the next call with no restart.
+- `notification_status` reports the source and whether the fallback file exists, so this is diagnosable in one call instead of an investigation.
+- The "not configured" error names both locations and gives the no-restart fix.
+
+Verified by running the server both normally and under `env -u NTFY_TOPIC -u NTFY_SERVER -u NTFY_TOKEN`, which reproduces the reported failure exactly: it reports "Configured from environment" in the first case and "Configured from config file" in the second. With the file also removed, the error text names both paths and the immediate fix.

@@ -1,13 +1,26 @@
 #!/usr/bin/env python3
 """An MCP server that lets Claude push a notification to your phone via ntfy.
 
-Configuration comes from the environment, read at call time rather than at
-import time, so changing NTFY_TOPIC and restarting the container is enough --
-no need to rebuild the image.
+Configuration is read at call time, not import time, and from two sources in
+order: the process environment first, then a config file.
 
     NTFY_TOPIC   (required) the topic your phone is subscribed to
     NTFY_SERVER  (optional) defaults to https://ntfy.sh
     NTFY_TOKEN   (optional) bearer token, for self-hosted servers with auth
+
+The file fallback exists because this server is not started by the container.
+It is spawned by Claude Desktop, which is itself started by XFCE autostart,
+under xfce4-session, under dbus-launch, under supervisord. Every link in that
+chain has to pass the environment along, and Electron in particular does not
+reliably do so. When it breaks, the failure is invisible: the variables are
+plainly present in a shell you open in the container, yet absent in this
+process, which makes it look like the container was misconfigured when it was
+not.
+
+So the entrypoint also writes the values to CONFIG_FILE, and this server reads
+that when the environment is empty. That path does not depend on any process
+inheriting anything. Editing that file takes effect on the next tool call --
+no container restart, since config is read per call.
 
 Note that on the public ntfy.sh, topics are unauthenticated: anyone who knows
 or guesses the topic name can read your notifications and publish to them. Use
@@ -18,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import urllib.error
 import urllib.request
 
@@ -37,16 +51,51 @@ mcp = MCPServer(
 PRIORITY_NAMES = {1: "min", 2: "low", 3: "default", 4: "high", 5: "urgent"}
 
 
-def _config() -> tuple[str, str, str | None]:
-    topic = os.environ.get("NTFY_TOPIC", "").strip()
+CONFIG_FILE = pathlib.Path.home() / ".config" / "ntfy-mcp.env"
+
+
+def _read_config_file() -> dict[str, str]:
+    """Parse the KEY=value fallback file. Missing or unreadable is not fatal."""
+    values: dict[str, str] = {}
+    try:
+        text = CONFIG_FILE.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return values
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def _config() -> tuple[str, str, str | None, str]:
+    """Return (topic, server, token, source). Environment wins over the file."""
+    file_values = _read_config_file()
+
+    def pick(key: str, default: str = "") -> tuple[str, str]:
+        env_value = os.environ.get(key, "").strip()
+        if env_value:
+            return env_value, "environment"
+        file_value = file_values.get(key, "").strip()
+        if file_value:
+            return file_value, "config file"
+        return default, "default"
+
+    topic, source = pick("NTFY_TOPIC")
     if not topic:
         raise ValueError(
-            "NTFY_TOPIC is not set in the container environment. "
-            "Set it in .env and restart the container."
+            "NTFY_TOPIC is set neither in this process's environment nor in "
+            f"{CONFIG_FILE}. Set NTFY_TOPIC in the .env file next to "
+            "docker-compose.yml and restart the container, which writes the "
+            f"fallback file. To fix it right now without a restart, create "
+            f"{CONFIG_FILE} containing a line reading NTFY_TOPIC=<your-topic> "
+            "-- it takes effect on the next call."
         )
-    server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
-    token = os.environ.get("NTFY_TOKEN", "").strip() or None
-    return topic, server, token
+    server, _ = pick("NTFY_SERVER", "https://ntfy.sh")
+    token, _ = pick("NTFY_TOKEN")
+    return topic, server.rstrip("/"), (token or None), source
 
 
 @mcp.tool()
@@ -78,7 +127,7 @@ def send_notification(
         return f"Refused: priority must be 1-5, got {priority}."
 
     try:
-        topic, server, token = _config()
+        topic, server, token, _ = _config()
     except ValueError as exc:
         return f"Not configured: {exc}"
 
@@ -124,11 +173,15 @@ def send_notification(
 def notification_status() -> str:
     """Report whether push notifications are configured, without sending one."""
     try:
-        topic, server, token = _config()
+        topic, server, token, source = _config()
     except ValueError as exc:
         return f"Not configured: {exc}"
     auth = "with auth token" if token else "no auth token"
-    return f"Configured: server {server}, topic {topic}, {auth}."
+    return (
+        f"Configured from {source}: server {server}, topic {topic}, {auth}. "
+        f"(Fallback file: {CONFIG_FILE}, "
+        f"{'present' if CONFIG_FILE.exists() else 'absent'}.)"
+    )
 
 
 if __name__ == "__main__":

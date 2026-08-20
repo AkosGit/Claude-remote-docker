@@ -48,7 +48,24 @@ Four things need doing once. All of them persist in the `claude-home` volume aft
 1. **Log into Claude Desktop.** It launches with the session. The OAuth flow opens in Chromium inside the desktop, so it completes without leaving the VNC session.
 2. **Install the Claude in Chrome extension.** Open Chrome (amd64) or Chromium (arm64) from the XFCE menu, go to the Chrome Web Store, and install it. Sign in.
 3. **Subscribe your phone to ntfy.** Install the ntfy app on iOS or Android, add a subscription for the topic you put in `NTFY_TOPIC`, pointed at `NTFY_SERVER`.
-4. **Test the notification path.** Ask Claude Desktop: *"Use the ntfy tool to send me a test notification."* Your phone should buzz. If it does not, ask it to run `notification_status` — that reports the configuration without sending anything.
+4. **Test the notification path.** Ask Claude Desktop: *"Use the ntfy tool to send me a test notification."* Your phone should buzz. If it does not, ask it to run `notification_status` — that reports the configuration, and which source it came from, without sending anything.
+
+### How the ntfy MCP server gets its configuration
+
+Worth knowing, because the obvious assumption is wrong. The MCP server is **not** a child of the container's init. Claude Desktop spawns it, and Claude Desktop is started by XFCE autostart, under `xfce4-session`, under `dbus-launch`, under supervisord. Every link has to pass the environment along, and Electron does not reliably do so.
+
+When that breaks, the symptom is confusing: `NTFY_TOPIC` is plainly visible in any shell you open in the container, yet the MCP server reports it as unset — which looks like the container was started wrong when it was not.
+
+So the entrypoint also writes the values to `~/.config/ntfy-mcp.env` (mode `0600`), and the server reads that whenever its environment is empty. That path depends on no process inheriting anything.
+
+`notification_status` tells you which source was used. To change the topic without restarting, edit that file — config is read per tool call:
+
+```bash
+docker compose exec -u claude claude-desktop \
+  sh -c 'echo NTFY_TOPIC=my-new-topic > ~/.config/ntfy-mcp.env'
+```
+
+A container restart rewrites the file from the environment whenever `NTFY_TOPIC` is set there.
 
 ## Everyday use
 
@@ -138,7 +155,7 @@ rootfs/usr/local/bin/start-*.sh               one wrapper per service
 rootfs/usr/local/bin/gen-tls-cert.sh          self-signed cert, generated once into the home volume
 rootfs/usr/local/bin/healthcheck.sh           scheme-aware (http vs https) container healthcheck
 rootfs/usr/local/bin/restart-browser          restarts Chromium (autostarted, so not under supervisord)
-rootfs/opt/ntfy-mcp/server.py                 the notification MCP server
+rootfs/opt/ntfy-mcp/server.py                 the notification MCP server (env, then ~/.config/ntfy-mcp.env)
 rootfs/opt/skel/                              seeded into /home/claude on first boot
 workspace/                                    bind-mounted to /workspace
 ```
@@ -167,7 +184,9 @@ Note that `primary_clipboard_enabled` is off by default, so X middle-click PRIMA
 
 **Playwright MCP cannot connect.** Chromium may not be up yet, or crashed. Check from inside the container: `curl -s http://127.0.0.1:9222/json/version`. If that fails, run `restart-browser`.
 
-**Notification tool reports "Not configured".** `NTFY_TOPIC` is unset. It is read at call time, so setting it in `.env` and running `docker compose up -d` is enough — no rebuild.
+**Notification tool reports "Not configured".** Neither the MCP server's environment nor `~/.config/ntfy-mcp.env` has `NTFY_TOPIC`. Set it in `.env` and run `docker compose up -d` — no rebuild needed. The error message names both paths and the no-restart fix.
+
+Do not be misled by `docker compose exec ... env | grep NTFY` showing the variable: an interactive shell gets the container environment directly, while the MCP server sits at the end of a long spawn chain that may have dropped it. `notification_status` reports which source it actually used.
 
 **Claude Desktop shows nothing useful in `docker compose logs`.** Its launcher redirects app output to a file instead of stdout:
 

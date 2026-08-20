@@ -83,10 +83,40 @@ if [[ "${VNC_TLS:-1}" == "1" ]]; then
     fi
 fi
 
-# --- ntfy sanity check --------------------------------------------------------
-if [[ -z "${NTFY_TOPIC:-}" ]]; then
-    log "WARNING: NTFY_TOPIC is unset. The send_notification MCP tool will fail"
-    log "         until you set it. See .env.example."
+# --- ntfy MCP configuration ---------------------------------------------------
+# Write the ntfy settings to a file the MCP server reads directly.
+#
+# The server is not a child of this container's init. Claude Desktop spawns it,
+# and Claude Desktop is started by XFCE autostart, under xfce4-session, under
+# dbus-launch, under supervisord. Relying on every link in that chain to pass
+# the environment along is fragile -- Electron in particular does not reliably
+# do so -- and when it breaks the symptom is baffling: the variables are
+# clearly present in any shell you open in the container, but absent in the
+# MCP server's process, so it looks like the container was started wrong when
+# it was not. This file bypasses the chain entirely.
+NTFY_CONF="${HOME_DIR}/.config/ntfy-mcp.env"
+mkdir -p "${HOME_DIR}/.config"
+
+if [[ -n "${NTFY_TOPIC:-}" ]]; then
+    umask 077
+    cat > "${NTFY_CONF}" <<EOF
+# Written by entrypoint.sh on container start, from the container environment.
+# Edit freely: the MCP server reads this per tool call, so changes take effect
+# on the next call with no restart. A container restart overwrites it whenever
+# NTFY_TOPIC is set in the environment.
+NTFY_TOPIC=${NTFY_TOPIC}
+NTFY_SERVER=${NTFY_SERVER:-https://ntfy.sh}
+NTFY_TOKEN=${NTFY_TOKEN:-}
+EOF
+    umask 022
+    # The topic string is the only access control on public ntfy.sh, so treat
+    # it as a secret rather than as configuration.
+    chmod 600 "${NTFY_CONF}"
+    log "ntfy: wrote MCP config to ${NTFY_CONF} (topic set)"
+else
+    log "WARNING: NTFY_TOPIC is unset, so the send_notification MCP tool will"
+    log "         fail. Set it in the .env file next to docker-compose.yml and"
+    log "         restart. Existing ${NTFY_CONF}, if any, is left untouched."
 fi
 
 # --- Ownership ----------------------------------------------------------------
