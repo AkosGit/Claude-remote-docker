@@ -108,3 +108,41 @@ No upload endpoint or upload strings exist anywhere in the open-source KasmVNC p
 **Verified after the switch:** build succeeds, `Xkasmvnc` reports KasmVNC 1.5.0, four services run (websockify correctly gone), the web UI returns 401 unauthenticated, 401 on a wrong password, and 200 on the right one, the served page is titled KasmVNC, the served UI bundle contains three `navigator.clipboard` references, `/api/downloads` answers 200, and a screen capture shows XFCE with Claude Desktop and Chromium rendered.
 
 **Not verified:** the actual host-to-container copy/paste round trip, which needs a human driving a real browser.
+
+## Amendment 2026-08-20: TLS by default, and a mode bug that explains the amd64 failure
+
+### Defect: `chmod +x` is not enough for a shell script
+
+Reported as "on amd64 the Chrome browser and Claude app did not launch". The cause is not architecture.
+
+The Dockerfile used `chmod +x /usr/local/bin/*.sh`. Where the source file was mode `0700` on the build host, `+x` produced `0711` — execute without read. A `#!/bin/bash` script must be **readable** by the user executing it, because the kernel hands the file to the interpreter and the interpreter reads the source. Result: `Permission denied`, exit 126.
+
+It presented as a partial failure for two compounding reasons:
+
+1. `entrypoint.sh` runs as **root** under supervisord, and root bypasses the read check — so the container appeared to start normally.
+2. Every supervisord program runs as `user=claude` (uid 1000), so those failed. Which ones failed depended on which source files happened to carry `0700` versus `0755` in that particular checkout — file modes that Git does not fully record (it tracks only the executable bit) and that therefore vary with the clone's umask.
+
+In the affected working tree, `start-vnc.sh` was `0711` while `start-chromium.sh` and `start-claude-desktop.sh` were `0700`, producing exactly the reported symptom: desktop up, both applications missing.
+
+Fixed by setting the mode absolutely rather than relatively — `chmod 0755`, plus `chmod -R a+rX` over `/opt/skel` and `/opt/ntfy-mcp` — so the image no longer inherits the build host's modes or umask. Repo file modes were normalised to 0755/0644 as well.
+
+Lesson worth keeping: in a Dockerfile, set permissions absolutely. A relative `chmod` silently imports whatever the build host happened to have, which is how a build reproducible on one machine breaks on another.
+
+### TLS by default
+
+Reported as "clipboard is not translating" on the remote amd64 deployment.
+
+Server side was already correct: KasmVNC ships `data_loss_prevention.clipboard.server_to_client.enabled: true` and `client_to_server.enabled: true`, both unlimited. Confirmed also that KasmVNC handles the clipboard inside the server and needs no `vncconfig`-style helper, so dropping the TigerVNC bridge was not a regression.
+
+The cause was client-side: `navigator.clipboard` is exposed only in a secure context — HTTPS anywhere, or plain HTTP on `localhost` and nowhere else. The remote deployment was reached by IP over plain HTTP, so the API was simply absent and the clipboard failed silently, with no error surfaced anywhere.
+
+Changes:
+
+- `VNC_TLS` defaults to `1`. `gen-tls-cert.sh` issues a self-signed cert on first boot into the home volume, so the fingerprint is stable across restarts and the browser only has to be told once. `VNC_TLS=0` restores plain HTTP for localhost-only or SSH-tunnelled use.
+- `VNC_TLS_SAN` adds the address actually typed in the browser. IPv4 literals are emitted as `IP:` entries and names as `DNS:`, because Chrome matches only `subjectAltName` and treats a mismatch as a hard rejection rather than a click-through warning.
+- `BIND_ADDR` (default `127.0.0.1`) controls the published interface, so a remote deployment is an explicit opt-in rather than an accident.
+- The healthcheck moved into `healthcheck.sh`, which picks http or https from `VNC_TLS` and accepts 200 or 401 — basic auth means an unauthenticated probe returns 401, which still proves the server is serving.
+
+Verified: all scripts `0755` in the image; all four services running, including the two that previously failed; HTTPS returns 401 unauthenticated and 200 authenticated; the served certificate carries `DNS:localhost, IP:127.0.0.1` plus the configured SANs; and the fingerprint is unchanged after `docker compose restart`.
+
+Not verified: the host-to-container copy/paste round trip itself, which needs a human at a browser.

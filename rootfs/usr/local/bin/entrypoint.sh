@@ -70,6 +70,19 @@ chmod 600 "${HOME_DIR}/.kasmpasswd"
 # KasmVNC's web UI can download files the desktop puts here.
 mkdir -p "${HOME_DIR}/Downloads"
 
+# --- TLS certificate ----------------------------------------------------------
+# Lives in the home volume so the browser only has to be told to trust it once.
+if [[ "${VNC_TLS:-1}" == "1" ]]; then
+    /usr/local/bin/gen-tls-cert.sh "${HOME_DIR}/.vnc-tls"
+    if [[ -z "${VNC_TLS_SAN:-}" ]]; then
+        log "NOTE: VNC_TLS_SAN is unset, so the certificate only covers"
+        log "      localhost. Reaching this by server IP or hostname will make"
+        log "      the browser reject it outright rather than just warn. Set"
+        log "      VNC_TLS_SAN to that address in .env, then delete"
+        log "      the .vnc-tls directory in the home volume to reissue."
+    fi
+fi
+
 # --- ntfy sanity check --------------------------------------------------------
 if [[ -z "${NTFY_TOPIC:-}" ]]; then
     log "WARNING: NTFY_TOPIC is unset. The send_notification MCP tool will fail"
@@ -88,6 +101,11 @@ fi
 
 log "Claude Desktop build commit: $(cat /etc/claude-desktop-build-commit 2>/dev/null || echo unknown)"
 log "Browser note: $(cat /etc/claude-desktop-arch-notes 2>/dev/null || echo unknown)"
-log "Web desktop will be at http://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
+if [[ "${VNC_TLS:-1}" == "1" ]]; then
+    log "Web desktop: https://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
+    log "  Self-signed certificate: expect a one-time browser warning."
+else
+    log "Web desktop: http://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
+fi
 
 exec "$@"

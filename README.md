@@ -7,7 +7,7 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | Component | Notes |
 | --- | --- |
 | XFCE desktop | Minimal session: window manager, panel, terminal, file manager. No `xfce4-goodies`. |
-| KasmVNC | `Xkasmvnc` is the X server, the websocket transport, and the web client in one process. Reachable at `http://localhost:6080/` behind basic auth. Chosen over noVNC for seamless clipboard — see below. |
+| KasmVNC | `Xkasmvnc` is the X server, the websocket transport, and the web client in one process. Serves HTTPS at `https://localhost:6080/` behind basic auth. Chosen over noVNC for seamless clipboard — see below. |
 | Claude Desktop | Unofficial Linux build (see caveat below). Launches automatically with the session. The installed binary is `claude-desktop-unofficial`, not `claude-desktop`. |
 | Chromium | Visible in the desktop, exposing CDP on `127.0.0.1:9222`. This is what Claude drives. |
 | Google Chrome | **amd64 only.** For the Claude in Chrome extension. On arm64, Chromium fills this role. |
@@ -39,7 +39,7 @@ Watch the logs for the generated credentials if you left `VNC_PASSWORD` blank:
 docker compose logs -f claude-desktop
 ```
 
-Open <http://localhost:6080/> and sign in. Default username is `claude`.
+Open <https://localhost:6080/> and sign in. Default username is `claude`. Expect a one-time certificate warning — the cert is self-signed.
 
 ## First-run setup
 
@@ -76,10 +76,23 @@ docker compose exec -u claude claude-desktop restart-browser
 
 **Copy/paste is seamless** — ordinary Cmd+C on your Mac, Cmd+V in the desktop, and back. This is why the image uses KasmVNC rather than noVNC: noVNC has no `navigator.clipboard` support in any released version (I checked 1.7.0, not just Debian's 1.3.0), so its clipboard is a manual paste-into-a-textarea panel. KasmVNC's web UI uses the real clipboard API.
 
-**This only works over `localhost`.** Browsers expose `navigator.clipboard` only in a secure context, and plain HTTP qualifies solely on localhost. If you republish the port on a LAN address, the clipboard silently degrades — and you have also removed the only thing protecting a plain-HTTP session. To reach it from another machine, tunnel over SSH rather than rebinding the port:
+**This needs a secure context, which is why the image serves HTTPS by default.** Browsers expose `navigator.clipboard` only over HTTPS, or over plain HTTP on `localhost` and nowhere else. Serving plain HTTP to a remote machine breaks copy/paste silently, with no error shown anywhere.
+
+So `VNC_TLS=1` is the default: a self-signed certificate is generated on first boot into the home volume, and you accept a one-time browser warning. It persists across restarts, so you are not re-prompted.
+
+**Set `VNC_TLS_SAN` to the address you actually type in the browser** — server IP, hostname, or Tailscale name. Chrome ignores a certificate's Common Name and matches only `subjectAltName`, so browsing to an address that is not listed makes Chrome **reject** the certificate outright rather than offer a click-through. After changing it, delete the cert to reissue:
 
 ```bash
-ssh -N -L 6080:127.0.0.1:6080 you@your-mac
+docker compose exec claude-desktop rm -rf /home/claude/.vnc-tls
+docker compose restart
+```
+
+For a remote deployment also set `BIND_ADDR=0.0.0.0` so the port publishes off-loopback. Only do that with `VNC_TLS=1`.
+
+If you would rather not deal with certificates, set `VNC_TLS=0` and tunnel instead — `localhost` on your end is a secure context, so the clipboard works:
+
+```bash
+ssh -N -L 6080:127.0.0.1:6080 you@your-server
 ```
 
 **For files, use the `./workspace` bind mount.** Anything you drop in `./workspace` on your Mac appears instantly at `/workspace` in the container, both directions, no size limit. That is better than any remote-desktop file transfer, and it is already set up.
@@ -92,6 +105,7 @@ Everything is set through `.env`. See `.env.example` for the full list; the ones
 
 - `NTFY_TOPIC` / `NTFY_SERVER` / `NTFY_TOKEN` — push notification target.
 - `VNC_USER` / `VNC_PASSWORD` — web UI credentials. This is real basic auth, so there is no 8-character ceiling; leave the password blank to get a random one printed at boot.
+- `VNC_TLS` / `VNC_TLS_SAN` / `BIND_ADDR` — see the clipboard section; these decide whether copy/paste works remotely.
 - `VNC_RESOLUTION` — defaults to `1920x1080`.
 - `VNC_FRAMERATE` — updates per second sent to the browser; defaults to `30`.
 - `CHROMIUM_START_URL` — the page Chromium opens on launch.
@@ -121,6 +135,8 @@ docker-compose.yml                            ports, volume, shm_size, healthche
 rootfs/etc/supervisor/conf.d/supervisord.conf KasmVNC, XFCE
 rootfs/usr/local/bin/entrypoint.sh            seeds the home volume, writes the web UI credentials
 rootfs/usr/local/bin/start-*.sh               one wrapper per service
+rootfs/usr/local/bin/gen-tls-cert.sh          self-signed cert, generated once into the home volume
+rootfs/usr/local/bin/healthcheck.sh           scheme-aware (http vs https) container healthcheck
 rootfs/usr/local/bin/restart-browser          restarts Chromium (autostarted, so not under supervisord)
 rootfs/opt/ntfy-mcp/server.py                 the notification MCP server
 rootfs/opt/skel/                              seeded into /home/claude on first boot
@@ -131,7 +147,21 @@ workspace/                                    bind-mounted to /workspace
 
 **Black screen in the web desktop.** XFCE takes a few seconds after the X server. Check `docker compose logs claude-desktop` for the `xfce` program failing to start.
 
-**Copy/paste stopped working.** You are almost certainly reaching the page on something other than `localhost` — a LAN IP or hostname. Non-localhost plain HTTP is not a secure context, so the browser withholds the clipboard API. Tunnel over SSH and use `localhost` on your end.
+**Copy/paste does nothing.** Check the secure context first — open DevTools on the KasmVNC page and run:
+
+```javascript
+console.log(window.isSecureContext, typeof navigator.clipboard)
+```
+
+`false undefined` means you are on plain HTTP at a non-localhost address. Set `VNC_TLS=1` (the default) and put your address in `VNC_TLS_SAN`, or tunnel over SSH.
+
+`true object` means the context is fine, so it is the browser: Firefox does not implement `navigator.clipboard.readText()` for page content and Safari is restricted — use Chrome, Chromium, or Edge. Also check the padlock icon → Site settings → Clipboard, in case the permission prompt was dismissed.
+
+Note that `primary_clipboard_enabled` is off by default, so X middle-click PRIMARY selection does not sync. Ordinary copy/paste is unaffected.
+
+**Chrome rejects the certificate outright instead of warning.** The address you are browsing to is not in the cert's `subjectAltName`. Put it in `VNC_TLS_SAN`, delete `/home/claude/.vnc-tls` in the container, and restart.
+
+**A service dies immediately with `Permission denied` (exit 126).** The scripts in `rootfs/usr/local/bin/` need mode `0755`, not just the execute bit — a `#!/bin/bash` script has to be *readable* by the user running it. The Dockerfile sets the mode absolutely for this reason. If you add a script, `chmod 0755` it.
 
 **Chromium tabs crash immediately.** `/dev/shm` is too small. `shm_size: "2gb"` is already in `docker-compose.yml`; if you run the image with plain `docker run`, pass `--shm-size=2g`.
 

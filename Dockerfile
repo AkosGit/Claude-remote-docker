@@ -77,7 +77,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Minimal XFCE: session, WM, desktop, panel, settings, terminal, file manager.
 # Deliberately NOT installing the xfce4 metapackage or xfce4-goodies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget gnupg git openssh-client \
+        ca-certificates curl wget gnupg git openssh-client openssl \
         sudo procps psmisc nano less locales tini \
         supervisor \
         xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings \
@@ -173,7 +173,15 @@ COPY rootfs/usr/local/bin/ /usr/local/bin/
 COPY rootfs/etc/supervisor/conf.d/ /etc/supervisor/conf.d/
 COPY rootfs/opt/skel/ /opt/skel/
 
-RUN chmod +x /usr/local/bin/*.sh /usr/local/bin/restart-browser \
+# chmod 0755, NOT `chmod +x`. A shell script must be READABLE by whoever runs
+# it -- the kernel hands the file to the interpreter, which then reads it. If
+# the source file is 0700 on the build host, `chmod +x` yields 0711: execute
+# without read. root ignores that, so the entrypoint still runs, but every
+# supervisord program runs as uid 1000 and dies with "Permission denied".
+# Setting the mode absolutely makes the image independent of the build host's
+# file modes and umask.
+RUN chmod 0755 /usr/local/bin/*.sh /usr/local/bin/restart-browser \
+    && chmod -R a+rX /opt/skel /opt/ntfy-mcp \
     && chown -R 1000:1000 /opt/skel /opt/ntfy-mcp
 
 # --- Runtime -----------------------------------------------------------------

@@ -18,12 +18,13 @@ services:
       - .env
 
     ports:
-      # KasmVNC web desktop. Loopback-bound for two reasons, both load-bearing:
-      # it is plain HTTP behind basic auth, AND browsers only treat localhost
-      # as a secure context -- which is what allows navigator.clipboard, and
-      # therefore seamless copy/paste, to work at all. Publishing this on a
-      # LAN address would break the clipboard as well as the security model.
-      - "127.0.0.1:6080:6080"
+      # KasmVNC web desktop, HTTPS by default (VNC_TLS=1).
+      #
+      # BIND_ADDR defaults to 127.0.0.1 so a careless `up` never exposes the
+      # desktop to the network. For a remote deployment set BIND_ADDR=0.0.0.0
+      # in .env -- but only with VNC_TLS=1, since plain HTTP over a network
+      # both leaks the session and silently disables the clipboard.
+      - "${BIND_ADDR:-127.0.0.1}:${NOVNC_PORT:-6080}:6080"
       # No raw RFB port: KasmVNC authenticates the web path with a real
       # username/password, where raw VNC auth caps at 8 characters.
 
@@ -44,7 +45,7 @@ services:
     restart: unless-stopped
 
     healthcheck:
-      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6080/ | grep -qE '200|401'"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 30s
       timeout: 5s
       retries: 5
