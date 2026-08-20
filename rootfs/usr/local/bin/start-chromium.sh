@@ -11,6 +11,11 @@ set -euo pipefail
 
 export DISPLAY=:1
 
+# No arguments means autostart; arguments mean a menu launch or a URL handler.
+if [[ $# -eq 0 ]]; then
+    set -- "${CHROMIUM_START_URL:-https://claude.ai}"
+fi
+
 BROWSER=""
 for candidate in /usr/bin/chromium /usr/bin/chromium-browser; do
     if [[ -x "${candidate}" ]]; then BROWSER="${candidate}"; break; fi
@@ -32,4 +37,4 @@ exec "${BROWSER}" \
     --remote-debugging-address=127.0.0.1 \
     --user-data-dir="${HOME}/.config/chromium-profile" \
     --window-size="${VNC_RESOLUTION/x/,}" \
-    "${CHROMIUM_START_URL:-https://claude.ai}"
+    "$@"

@@ -13,7 +13,7 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | Google Chrome | **amd64 only.** For the Claude in Chrome extension. On arm64, Chromium fills this role. |
 | Playwright MCP | `@playwright/mcp` attached to the visible Chromium, so you watch Claude click. |
 | ntfy MCP | `send_notification` and `notification_status` tools that push to your phone. |
-| Toolchain | git, Node.js 22 (`node`, `npm`, `npx`), Python 3, `uv`. |
+| Toolchain | git, GitHub CLI (`gh`), Node.js 22 (`node`, `npm`, `npx`), Python 3, `uv`. |
 
 ## Quick start
 
@@ -129,6 +129,14 @@ Everything is set through `.env`. See `.env.example` for the full list; the ones
 
 MCP servers are registered in `~/.config/Claude/claude_desktop_config.json`, seeded from `/opt/skel` on first boot. Edit that file in the container to add more; it survives restarts.
 
+## Running as root
+
+By default the whole desktop session runs as **root** — KasmVNC, XFCE, and therefore Chromium and Claude Desktop. `SESSION_USER=claude` in `.env` switches it to unprivileged; that user has passwordless sudo either way.
+
+`HOME` stays `/home/claude` in both modes, because that is the mounted volume, so logins, browser profiles and the TLS cert persist regardless.
+
+**Do not launch a single app under `sudo` while the session runs as `claude`.** It leaves root-owned files in `/home/claude` and the next non-root start fails on its own config, with an error that points nowhere near the cause. Change `SESSION_USER` instead, which chowns the home directory to match.
+
 ## Caveats, honestly
 
 **Claude Desktop has no official Linux build.** Anthropic ships Mac and Windows only. This image uses [`aaddrick/claude-desktop-debian`](https://github.com/aaddrick/claude-desktop-debian), which repacks the official Windows installer against Linux Electron. It works well, but it is unofficial and unsupported: when Anthropic changes the installer format, builds break until upstream catches up. Bump `CLAUDE_DEB_REF` in `docker-compose.yml` to pick up their fixes. If reliability matters more than having the GUI, the Claude Code CLI is officially supported and installs with a single `npm i -g @anthropic-ai/claude-code`.
@@ -151,7 +159,7 @@ docker-compose.yml                            ports, volume, shm_size, healthche
 .env.example                                  all configuration
 rootfs/etc/supervisor/conf.d/supervisord.conf KasmVNC, XFCE
 rootfs/usr/local/bin/entrypoint.sh            seeds the home volume, writes the web UI credentials
-rootfs/usr/local/bin/start-*.sh               one wrapper per service
+rootfs/usr/local/bin/start-*.sh               one wrapper per service; also the target of the menu .desktop entries
 rootfs/usr/local/bin/gen-tls-cert.sh          self-signed cert, generated once into the home volume
 rootfs/usr/local/bin/healthcheck.sh           scheme-aware (http vs https) container healthcheck
 rootfs/usr/local/bin/restart-browser          restarts Chromium (autostarted, so not under supervisord)
@@ -177,6 +185,8 @@ console.log(window.isSecureContext, typeof navigator.clipboard)
 Note that `primary_clipboard_enabled` is off by default, so X middle-click PRIMARY selection does not sync. Ordinary copy/paste is unaffected.
 
 **Chrome rejects the certificate outright instead of warning.** The address you are browsing to is not in the cert's `subjectAltName`. Put it in `VNC_TLS_SAN`, delete `/home/claude/.vnc-tls` in the container, and restart.
+
+**An app launches from autostart but not from the XFCE application menu.** Fixed in the image, but worth knowing if you add another app. The `.desktop` files shipped by the Claude and Chromium packages `Exec` the raw binaries with no `--no-sandbox`, and both Electron and Chromium refuse to start as root without it — they die with a trace trap. Autostart worked because it goes through the wrappers in `/usr/local/bin`. The Dockerfile now rewrites every `Exec=` line in those desktop files, including the Desktop Action entries ("New Window" and friends), to point at the same wrappers. Any new GUI app you add needs the same treatment.
 
 **A service dies immediately with `Permission denied` (exit 126).** The scripts in `rootfs/usr/local/bin/` need mode `0755`, not just the execute bit — a `#!/bin/bash` script has to be *readable* by the user running it. The Dockerfile sets the mode absolutely for this reason. If you add a script, `chmod 0755` it.
 

@@ -135,6 +135,51 @@ RUN apt-get update \
     && rm -f /tmp/claude-desktop.deb \
     && rm -rf /var/lib/apt/lists/*
 
+# --- GitHub CLI --------------------------------------------------------------
+RUN set -eux; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gh; \
+    rm -rf /var/lib/apt/lists/*; \
+    gh --version
+
+# --- Fix the application-menu launchers --------------------------------------
+# The .desktop files shipped by the Claude and Chromium packages Exec the raw
+# binaries, with no --no-sandbox. Electron and Chromium both refuse to start as
+# root without it, so launching from the XFCE menu died with a trace trap while
+# autostart -- which goes through the wrappers in /usr/local/bin -- worked fine.
+# That asymmetry is confusing to debug, so point the menu at the same wrappers.
+#
+# Desktop Actions ("New Window", "New Incognito Window") carry their own Exec=
+# lines, so every line has to be rewritten, not just the first.
+RUN python3 - <<'PYEOF'
+import glob, os, re
+
+def rewrite(path, replacement):
+    with open(path) as fh:
+        text = fh.read()
+    new = re.sub(r"^Exec=\S+", "Exec=" + replacement, text, flags=re.M)
+    if new != text:
+        with open(path, "w") as fh:
+            fh.write(new)
+        print("patched", path)
+
+for path in glob.glob("/usr/share/applications/*claude*.desktop"):
+    rewrite(path, "/usr/local/bin/start-claude-desktop.sh")
+
+for path in glob.glob("/usr/share/applications/*chromium*.desktop"):
+    rewrite(path, "/usr/local/bin/start-chromium.sh")
+
+# Chrome gets its own wrapper: routing it through start-chromium.sh would
+# silently launch Chromium instead, leaving Chrome unlaunchable from the menu.
+for path in glob.glob("/usr/share/applications/*google-chrome*.desktop"):
+    rewrite(path, "/usr/local/bin/start-chrome.sh")
+PYEOF
+
 # --- ntfy MCP server ---------------------------------------------------------
 COPY rootfs/opt/ntfy-mcp/ /opt/ntfy-mcp/
 RUN uv venv /opt/ntfy-mcp/.venv \
@@ -185,7 +230,12 @@ RUN chmod 0755 /usr/local/bin/*.sh /usr/local/bin/restart-browser \
     && chown -R 1000:1000 /opt/skel /opt/ntfy-mcp
 
 # --- Runtime -----------------------------------------------------------------
-ENV VNC_RESOLUTION=1920x1080 \
+# The whole desktop session runs as this user: KasmVNC, XFCE, and therefore
+# Chromium and Claude Desktop. Root by default so Claude can act privileged
+# without the mixed-ownership breakage that launching a single app under sudo
+# causes. Set SESSION_USER=claude to run unprivileged.
+ENV SESSION_USER=root \
+    VNC_RESOLUTION=1920x1080 \
     VNC_DEPTH=24 \
     VNC_PORT=5901 \
     NOVNC_PORT=6080 \

@@ -163,3 +163,32 @@ Attempting to confirm which link dropped it by diffing `/proc/<pid>/environ` aga
 - The "not configured" error names both locations and gives the no-restart fix.
 
 Verified by running the server both normally and under `env -u NTFY_TOPIC -u NTFY_SERVER -u NTFY_TOKEN`, which reproduces the reported failure exactly: it reports "Configured from environment" in the first case and "Configured from config file" in the second. With the file also removed, the error text names both paths and the immediate fix.
+
+## Amendment 2026-08-20: root session, menu launchers, GitHub CLI
+
+### Session runs as root
+
+Requested so Claude can act privileged. Implemented as a runtime toggle rather than a baked-in decision: `SESSION_USER` (default `root`) is consumed by supervisord through `%(ENV_SESSION_USER)s` and by the entrypoint, which chowns `/home/claude` to whichever user is selected. `HOME` remains `/home/claude` in both modes so the volume keeps its meaning — logins, browser profiles and the TLS certificate persist either way.
+
+The alternative that was rejected: launching only Claude Desktop under `sudo` while the session stays unprivileged. That writes root-owned files into `/home/claude/.config/Claude`, after which the next non-root start fails on its own config with an error that gives no hint of the cause. One uid for the whole session avoids an entire class of confusing breakage.
+
+### Menu launchers did not work while autostart did
+
+The `.desktop` files shipped by the Claude and Chromium packages `Exec` the raw binaries:
+
+    Exec=/usr/bin/claude-desktop-unofficial %u
+    Exec=/usr/bin/chromium %U
+
+Neither carries `--no-sandbox`, and both Electron and Chromium refuse to start as root without it, dying with a trace trap. Autostart was unaffected because it goes through the wrappers in `/usr/local/bin`, which supply the flag. The result was a genuinely confusing asymmetry: the same application worked at login and failed from the menu.
+
+The Dockerfile now rewrites every `Exec=` line in those files to point at the wrappers. Every line matters, not just the first: Desktop Actions ("New Window", "New Incognito Window") carry their own.
+
+Google Chrome gets `start-chrome.sh` rather than sharing `start-chromium.sh`. Pointing it at the Chromium wrapper would silently launch Chromium instead, leaving Chrome unreachable from the menu on amd64 — a bug caught while writing the rewrite rule, not after shipping it. `start-chromium.sh` also now forwards `"$@"`, so the menu's `%U` URL handling works, falling back to the start page only when invoked with no arguments.
+
+### GitHub CLI
+
+`gh` installed from the official apt repository, which publishes both amd64 and arm64.
+
+### Verification
+
+`gh version 2.97.0`. Both menu entries rewritten to the wrappers. The decisive test: kill every `claude-desktop` process, confirm zero remain, then run only the menu's `Exec` line — 9 processes, 3 mapped windows, zero trace traps. A first attempt at this test was invalid because `pkill -f claude-desktop` matched the test shell's own command line and killed it (exit 143); `pkill -x` fixed that. Worth remembering: a second Claude Desktop launch merely focuses the existing single instance, so testing a launcher without first clearing the running instance proves nothing.

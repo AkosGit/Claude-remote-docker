@@ -6,6 +6,20 @@ set -euo pipefail
 HOME_DIR=/home/claude
 SEED_MARKER="${HOME_DIR}/.seeded"
 
+# Everything in the desktop session runs as this user: KasmVNC, XFCE, and
+# therefore Chromium and Claude Desktop. Root by default; set SESSION_USER=claude
+# in .env to run unprivileged instead.
+#
+# HOME stays /home/claude regardless, because that is the mounted volume --
+# so logins, browser profiles and the TLS cert persist either way.
+SESSION_USER="${SESSION_USER:-root}"
+if ! id -u "${SESSION_USER}" >/dev/null 2>&1; then
+    echo "[entrypoint] FATAL: SESSION_USER='${SESSION_USER}' does not exist" >&2
+    exit 1
+fi
+SESSION_UID="$(id -u "${SESSION_USER}")"
+SESSION_GID="$(id -g "${SESSION_USER}")"
+
 log() { echo "[entrypoint] $*"; }
 
 # --- Seed the home volume from the build-time skeleton ------------------------
@@ -120,8 +134,11 @@ else
 fi
 
 # --- Ownership ----------------------------------------------------------------
-chown -R 1000:1000 "${HOME_DIR}"
-mkdir -p /workspace && chown 1000:1000 /workspace || true
+# Chown unconditionally to the session user. Switching SESSION_USER leaves the
+# volume owned by the previous one, and a half-owned home is exactly the
+# failure this consolidation exists to avoid.
+chown -R "${SESSION_UID}:${SESSION_GID}" "${HOME_DIR}"
+mkdir -p /workspace && chown "${SESSION_UID}:${SESSION_GID}" /workspace || true
 
 # Shared memory: Chromium and Electron are unhappy with Docker's default 64MB.
 if [[ "$(df -k /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')" == "65536" ]]; then
@@ -132,10 +149,13 @@ fi
 log "Claude Desktop build commit: $(cat /etc/claude-desktop-build-commit 2>/dev/null || echo unknown)"
 log "Browser note: $(cat /etc/claude-desktop-arch-notes 2>/dev/null || echo unknown)"
 if [[ "${VNC_TLS:-1}" == "1" ]]; then
+    log "Session runs as: ${SESSION_USER} (uid ${SESSION_UID})"
     log "Web desktop: https://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
     log "  Self-signed certificate: expect a one-time browser warning."
 else
     log "Web desktop: http://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
 fi
+
+export SESSION_USER
 
 exec "$@"
