@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ntfy": {
+      "command": "/opt/ntfy-mcp/.venv/bin/python",
+      "args": ["/opt/ntfy-mcp/server.py"]
+    }
+  }
+}

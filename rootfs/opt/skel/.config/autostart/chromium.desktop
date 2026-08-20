@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Chromium
+Comment=Web browser with CDP enabled
+Exec=/usr/local/bin/start-chromium.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true

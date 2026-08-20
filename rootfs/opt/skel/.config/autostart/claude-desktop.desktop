@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Claude Desktop
+Comment=Claude Desktop application
+Exec=/usr/local/bin/start-claude-desktop.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true
