@@ -38,7 +38,6 @@ fi
 mkdir -p \
     "${HOME_DIR}/.config/Claude" \
     "${HOME_DIR}/.config/chromium-profile" \
-    "${HOME_DIR}/.config/chrome-profile" \
     "${HOME_DIR}/.claude"
 
 # --- Clear stale browser profile locks ---------------------------------------
@@ -50,7 +49,7 @@ mkdir -p \
 #
 # Nothing can legitimately hold these at entrypoint time: no browser has
 # started yet this boot. Safe to remove unconditionally.
-for profile in "${HOME_DIR}/.config/chromium-profile" "${HOME_DIR}/.config/chrome-profile"; do
+for profile in "${HOME_DIR}/.config/chromium-profile"; do
     if [[ -d "${profile}" ]]; then
         rm -f "${profile}/SingletonLock" \
               "${profile}/SingletonCookie" \
@@ -139,6 +138,24 @@ fi
 # KasmVNC's web UI can download files the desktop puts here.
 mkdir -p "${HOME_DIR}/Downloads"
 
+# --- Electron sandbox -----------------------------------------------------------
+# Electron refuses to start as root unless its sandbox is disabled, dying with
+# a trace trap and "Running as root without --no-sandbox is not supported".
+# The wrappers in /usr/local/bin pass --no-sandbox, but that only covers
+# launches this image controls -- not an Electron tool started from a terminal,
+# or one app spawning another.
+#
+# ELECTRON_DISABLE_SANDBOX covers every Electron process that inherits this
+# environment. Verified: as root without it, Claude Desktop dies with a trace
+# trap and 0 surviving processes; with it, 9 processes and no sandbox error.
+#
+# Only set when the session actually runs as root. Under SESSION_USER=claude
+# the sandbox works and should stay on.
+if [[ "${SESSION_UID}" == "0" ]]; then
+    export ELECTRON_DISABLE_SANDBOX=1
+    log "Electron sandbox disabled (session runs as root)"
+fi
+
 # --- TLS ----------------------------------------------------------------------
 # One variable per server, because the two have opposite constraints and a
 # single switch forced a bad trade:
@@ -220,7 +237,6 @@ if [[ "$(df -k /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')" == "65536" ]]; th
 fi
 
 log "Claude Desktop build commit: $(cat /etc/claude-desktop-build-commit 2>/dev/null || echo unknown)"
-log "Browser note: $(cat /etc/claude-desktop-arch-notes 2>/dev/null || echo unknown)"
 log "Session runs as: ${SESSION_USER} (uid ${SESSION_UID})"
 log "TLS: KasmVNC=${KASMVNC_TLS}  x11vnc=${X11VNC_TLS}"
 if [[ "${KASMVNC_TLS}" == "1" ]]; then

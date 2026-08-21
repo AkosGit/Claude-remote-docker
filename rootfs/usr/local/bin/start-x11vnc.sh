@@ -10,6 +10,16 @@
 # NOT bound to localhost here on purpose: inside the container it must listen
 # on all interfaces for Docker's port publishing to reach it. The loopback
 # restriction is applied on the host side by BIND_ADDR in docker-compose.yml.
+# -noxrandr is not optional here. Both servers share one X display, so
+# KasmVNC's dynamic resizing drives XRANDR events into x11vnc, and 0.9.16 does
+# not survive them: its log stops mid-handler after
+# "check_xrandr_event(): returning control to caller..." and the process spins
+# at ~50% CPU indefinitely. Ignoring the events keeps it in state S at ~0% CPU
+# through the same resize.
+#
+# The cost is that the native client's desktop size no longer follows browser
+# resizes -- it stays at whatever size the display was when x11vnc started.
+
 set -euo pipefail
 
 export DISPLAY=:1
@@ -71,6 +81,7 @@ exec x11vnc \
     -shared \
     -forever \
     -noxdamage \
+    -noxrandr \
     -repeat \
     -xkb \
     -o /dev/stdout

@@ -5,7 +5,6 @@
 # A Debian-based container running an XFCE desktop over VNC/noVNC, with:
 #   - Claude Desktop (unofficial Linux repack of the official Windows build)
 #   - Chromium wired for CDP control via Playwright MCP
-#   - Google Chrome (amd64 only) for the Claude in Chrome extension
 #   - git, Node.js 22 (node/npm/npx), Python 3, uv
 #   - An ntfy MCP server so Claude can push notifications to your phone
 #
@@ -105,27 +104,16 @@ RUN curl -LsSf https://astral.sh/uv/install.sh \
     && uv --version
 
 # --- Browsers ----------------------------------------------------------------
-# Chromium is the CDP target that Playwright MCP drives. Available on both arches.
+# The only browser in the image. It is both the CDP target Playwright MCP
+# drives and the browser you install the Claude extension into.
+#
+# Google Chrome was removed: it publishes no arm64 Linux build, so carrying it
+# meant an architecture-conditional install, a second wrapper, a second profile
+# and a second .desktop rewrite -- all so amd64 could have a browser that does
+# the same job as the one already here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium chromium-common \
     && rm -rf /var/lib/apt/lists/*
-
-# Google Chrome ships Linux binaries for amd64 only. On arm64 there is no
-# official build, so Chromium doubles as the extension browser.
-RUN set -eux; \
-    if [ "${TARGETARCH}" = "amd64" ]; then \
-        wget -q -O /tmp/chrome.deb \
-            https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends /tmp/chrome.deb; \
-        rm -f /tmp/chrome.deb; \
-        rm -rf /var/lib/apt/lists/*; \
-        echo "google-chrome-stable" > /etc/claude-desktop-arch-notes; \
-    else \
-        echo "No official Google Chrome for ${TARGETARCH}; using Chromium for the extension browser." \
-            > /etc/claude-desktop-arch-notes; \
-    fi; \
-    cat /etc/claude-desktop-arch-notes
 
 # --- Claude Desktop ----------------------------------------------------------
 COPY --from=claude-builder /home/builder/out/claude-desktop.deb /tmp/claude-desktop.deb
@@ -144,7 +132,7 @@ RUN npm install -g opencode-ai \
 
 # --- Antigravity (amd64 only) ------------------------------------------------
 # Google publishes no arm64 Linux build -- the arm64 URL is a hard 404 -- so
-# this mirrors the Google Chrome handling: install on amd64, note the absence
+# install on amd64 and note the absence
 # on arm64 rather than failing the build.
 #
 # The download URL is version-pinned and Google rotates it, so a hardcoded URL
@@ -188,6 +176,42 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     gh --version
 
+# --- Electron: disable the sandbox for root shells ---------------------------
+# The entrypoint exports ELECTRON_DISABLE_SANDBOX for supervisord's children,
+# which covers the desktop session and anything launched from it. It does NOT
+# cover a shell opened with `docker exec`, which receives the image's static
+# environment instead. Electron apps started from such a shell would still die
+# with "Running as root without --no-sandbox is not supported".
+#
+# profile.d covers login shells on both paths, and is guarded on uid 0 so the
+# sandbox stays intact under SESSION_USER=claude.
+RUN printf '%s\n' \
+    '# Electron will not start as root with its sandbox enabled. The container' \
+    '# is the isolation boundary here, not the app.' \
+    'if [ "$(id -u)" = "0" ]; then' \
+    '  export ELECTRON_DISABLE_SANDBOX=1' \
+    'fi' \
+    > /etc/profile.d/00-electron-sandbox.sh \
+    && chmod 0644 /etc/profile.d/00-electron-sandbox.sh
+
+# --- Chromium: --no-sandbox globally, but only when running as root ----------
+# Debian's /usr/bin/chromium is a shell wrapper that sources /etc/chromium.d/*
+# and appends $CHROMIUM_FLAGS, which gives one place to fix every Chromium
+# launch -- including ones this image never sees, such as a tool spawning a
+# browser or someone typing `chromium` in a terminal. The per-app wrappers in
+# /usr/local/bin only cover launches we control.
+#
+# Guarded on uid 0: with SESSION_USER=claude the sandbox works normally and
+# must not be weakened.
+RUN printf '%s\n' \
+    '# Chromium refuses to start as root unless the sandbox is disabled.' \
+    '# The container is the isolation boundary here, not the browser.' \
+    'if [ "$(id -u)" = "0" ]; then' \
+    '  CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"' \
+    'fi' \
+    > /etc/chromium.d/00-container-root-no-sandbox \
+    && chmod 0644 /etc/chromium.d/00-container-root-no-sandbox
+
 # --- Fix the application-menu launchers --------------------------------------
 # The .desktop files shipped by the Claude and Chromium packages Exec the raw
 # binaries, with no --no-sandbox. Electron and Chromium both refuse to start as
@@ -215,10 +239,6 @@ for path in glob.glob("/usr/share/applications/*claude*.desktop"):
 for path in glob.glob("/usr/share/applications/*chromium*.desktop"):
     rewrite(path, "/usr/local/bin/start-chromium.sh")
 
-# Chrome gets its own wrapper: routing it through start-chromium.sh would
-# silently launch Chromium instead, leaving Chrome unlaunchable from the menu.
-for path in glob.glob("/usr/share/applications/*google-chrome*.desktop"):
-    rewrite(path, "/usr/local/bin/start-chrome.sh")
 PYEOF
 
 # --- ntfy MCP server ---------------------------------------------------------

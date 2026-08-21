@@ -9,8 +9,7 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | XFCE desktop | Minimal session: window manager, panel, terminal, file manager. No `xfce4-goodies`. |
 | KasmVNC | `Xkasmvnc` is the X server, the websocket transport, and the web client in one process. Serves HTTPS at `https://localhost:6080/` behind basic auth. Chosen over noVNC for seamless clipboard — see below. |
 | Claude Desktop | Unofficial Linux build (see caveat below). Launches automatically with the session. The installed binary is `claude-desktop-unofficial`, not `claude-desktop`. |
-| Chromium | Visible in the desktop, exposing CDP on `127.0.0.1:9222`. This is what Claude drives. |
-| Google Chrome | **amd64 only.** For the Claude in Chrome extension. On arm64, Chromium fills this role. |
+| Chromium | The only browser. Visible in the desktop, exposing CDP on `127.0.0.1:9222` — both what Claude drives and where you install the Claude extension. |
 | Playwright MCP | `@playwright/mcp` attached to the visible Chromium, so you watch Claude click. |
 | ntfy MCP | `send_notification` and `notification_status` tools that push to your phone. |
 | x11vnc | Re-exports the *same* `:1` display over raw RFB on 5901, for native VNC clients. Not a second X server, so no second desktop. |
@@ -48,7 +47,7 @@ Open <https://localhost:6080/> and sign in. Default username is `claude`. Expect
 Four things need doing once. All of them persist in the `claude-home` volume afterwards.
 
 1. **Log into Claude Desktop.** It launches with the session. The OAuth flow opens in Chromium inside the desktop, so it completes without leaving the VNC session.
-2. **Install the Claude in Chrome extension.** Open Chrome (amd64) or Chromium (arm64) from the XFCE menu, go to the Chrome Web Store, and install it. Sign in.
+2. **Install the Claude in Chrome extension.** Open Chromium from the XFCE menu, go to the Chrome Web Store, and install it. Sign in.
 3. **Subscribe your phone to ntfy.** Install the ntfy app on iOS or Android, add a subscription for the topic you put in `NTFY_TOPIC`, pointed at `NTFY_SERVER`.
 4. **Test the notification path.** Ask Claude Desktop: *"Use the ntfy tool to send me a test notification."* Your phone should buzz. If it does not, ask it to run `notification_status` — that reports the configuration, and which source it came from, without sending anything.
 
@@ -205,9 +204,7 @@ By default the whole desktop session runs as **root** — KasmVNC, XFCE, and the
 
 **Public ntfy topics are readable by anyone who knows the name.** There is no account and no access control on `ntfy.sh`. Use a random topic, or self-host and set `NTFY_TOKEN`.
 
-**It is not small.** The built arm64 image measures **3.41 GB** (my pre-build estimate of 2.2–2.6 GB was low). XFCE, Electron, and Chromium set the floor, and the Claude Desktop payload alone is a 162 MB `.deb` that unpacks larger. Dropping XFCE for Openbox saves roughly 400 MB. An amd64 build is larger still, since it also carries Google Chrome.
-
-**Google Chrome is amd64-only.** There is no official Google Chrome build for Linux on arm64, so on Apple Silicon you get Chromium for both roles. The build prints which you got, and the container logs it at boot.
+**It is not small.** The built arm64 image measures **3.41 GB** (my pre-build estimate of 2.2–2.6 GB was low). XFCE, Electron, and Chromium set the floor, and the Claude Desktop payload alone is a 162 MB `.deb` that unpacks larger. Dropping XFCE for Openbox saves roughly 400 MB.
 
 ## Layout
 
