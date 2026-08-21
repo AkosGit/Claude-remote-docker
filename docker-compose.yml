@@ -25,8 +25,11 @@ services:
       # in .env -- but only with VNC_TLS=1, since plain HTTP over a network
       # both leaks the session and silently disables the clipboard.
       - "${BIND_ADDR:-127.0.0.1}:${NOVNC_PORT:-6080}:6080"
-      # No raw RFB port: KasmVNC authenticates the web path with a real
-      # username/password, where raw VNC auth caps at 8 characters.
+      # Native VNC (x11vnc) onto the same desktop. Classic VNC auth is weak --
+      # no username, 8-character password ceiling -- so this stays on
+      # BIND_ADDR, i.e. loopback unless you deliberately change it. Reach it
+      # remotely over an SSH tunnel or Tailscale, not by opening the port.
+      - "${BIND_ADDR:-127.0.0.1}:${X11VNC_PORT:-5901}:5901"
 
     volumes:
       # Single home volume: Claude Desktop login, both browser profiles and

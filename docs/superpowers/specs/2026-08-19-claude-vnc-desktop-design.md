@@ -192,3 +192,52 @@ Google Chrome gets `start-chrome.sh` rather than sharing `start-chromium.sh`. Po
 ### Verification
 
 `gh version 2.97.0`. Both menu entries rewritten to the wrappers. The decisive test: kill every `claude-desktop` process, confirm zero remain, then run only the menu's `Exec` line — 9 processes, 3 mapped windows, zero trace traps. A first attempt at this test was invalid because `pkill -f claude-desktop` matched the test shell's own command line and killed it (exit 143); `pkill -x` fixed that. Worth remembering: a second Claude Desktop launch merely focuses the existing single instance, so testing a launcher without first clearing the running instance proves nothing.
+
+## Amendment 2026-08-21: native VNC alongside the web UI, and per-server TLS
+
+### Why x11vnc rather than TightVNC
+
+The request was "install TightVNC alongside the current VNC and use both". Taken literally that is a trap, and the distinction that matters is what kind of program each one is:
+
+- `Xkasmvnc` and `Xtightvnc` are **X servers**. Each creates its own display, so running both means two separate desktops. Sharing `HOME` between them puts two Claude Desktops on one single-instance lock and two Chromiums on one `SingletonLock` — reintroducing the bug fixed on 2026-08-20.
+- `x11vnc` is **not** an X server. It attaches to an existing display and re-exports it over RFB. One desktop, two ways in.
+
+Verified rather than assumed: KasmVNC was started on `:7` with the deliberately odd geometry `1234x777`, a window was opened on it, and x11vnc was attached. An RFB handshake against x11vnc reported framebuffer `1234x777` and desktop name `<host>:7` — a geometry that could only have come from that X server.
+
+A cheaper option was investigated first and rejected on evidence: KasmVNC accepts `-rfbport` but opens no listener for it. Reading `/proc/net/tcp` showed only the websocket port, and the server log says only `Listening for websocket connections`. The parameter is vestigial from its TigerVNC ancestry. KasmVNC is websocket-only, so no native client can reach it. An earlier recommendation to "just re-enable KasmVNC's rfbport" was therefore wrong and was retracted.
+
+### TLS split into two variables
+
+A single `VNC_TLS` forced a bad trade, because the two servers want opposite things:
+
+- The **web UI** needs TLS. `navigator.clipboard` is exposed only in a secure context, so serving plain HTTP to anything other than localhost silently disables copy/paste with no error surfaced anywhere.
+- **x11vnc** is usually better without it. `-ssl` wraps RFB in TLS, but then only VNC-over-SSL clients can connect; macOS Screen Sharing and ordinary clients hang waiting on a ClientHello. Over an encrypted overlay the stream is already protected, so TLS there costs client compatibility and buys little.
+
+Hence `KASMVNC_TLS` and `X11VNC_TLS`, both falling back to `VNC_TLS` when unset so pre-split configs keep their behaviour. The certificate is shared, so `VNC_TLS_SAN` covers whichever are enabled, and the entrypoint generates it when *either* asks for it. x11vnc needs key and certificate concatenated into one PEM; KasmVNC wants them separate. Same key material, so both present an identical certificate.
+
+Two defects surfaced while wiring this up. The final summary log still tested `VNC_TLS`, so with `KASMVNC_TLS=0` it would have printed `https://` while serving HTTP — a log that lies about the thing being debugged. It also printed `localhost` rather than `BIND_ADDR`, wrong the moment the port moved off loopback. Both fixed; the entrypoint now prints the state of both switches and what each implies for clients.
+
+x11vnc's SSL layer proved unreliable: the listener wedged once, accepting TCP while never reaching the process, and `supervisorctl restart x11vnc` cleared it. Zombie helper processes also accumulate. Version 0.9.16, last modified 2019-01-05. Documented rather than worked around.
+
+### Password limits, measured
+
+Both were determined empirically rather than taken from documentation:
+
+| | Min | Max | Truncation |
+| --- | --- | --- | --- |
+| `VNC_PASSWORD` (web) | 1 | ~180 | none |
+| `X11VNC_PASSWORD` (native) | 1 | 8, hard | silent past 8 |
+
+`kasmvncpasswd` refuses fewer than 6 characters, and that limit was initially reported to the user as immovable. It is not: the file is `user:hash:perms` where the hash is SHA-256 crypt with the fixed salt `kasm`, confirmed by reproducing a tool-written hash byte-for-byte with `openssl passwd -5 -salt kasm`. The entrypoint writes the entry directly when the password is short and still uses the vendor tool whenever it will accept the input, so only the awkward case takes the bypass. `openssl` is used rather than Python's `crypt`, which is deprecated and removed in 3.13.
+
+The web ceiling was bisected: 180 characters authenticate, 190 returns 403, 200 returned 401 on one run and 403 on another — an internal buffer limit rather than a defined rule.
+
+The native ceiling is the protocol itself and is the dangerous one: RFB VncAuth is DES with an 8-byte key, and `x11vnc -storepasswd` produces byte-identical files for `abcdefghWXYZ` and `abcdefgh`. A long password there yields 8 characters of security silently, so the entrypoint now states the effective value whenever more than 8 are supplied.
+
+### Also in this batch
+
+GitHub CLI and opencode installed for both architectures. Antigravity installed on amd64 only — the arm64 URL is a hard 404 — mirroring the Google Chrome handling, with a pinned URL that falls back to scraping the download page when Google rotates it.
+
+### A process note worth keeping
+
+A patch applied here replaced a *range between two markers* in `entrypoint.sh`, and the x11vnc password block sat inside that range, so it was silently deleted. The service kept working only because a stale password file survived in the volume; a fresh volume would have failed. It was caught by verifying against a wiped volume (`down -v`) rather than a restart. Marker-delimited range replacement is unsafe on a file being edited repeatedly — anchor on a unique string and insert, or re-read and assert afterwards.

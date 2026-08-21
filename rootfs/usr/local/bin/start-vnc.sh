@@ -6,13 +6,13 @@
 # username/password via -KasmPasswordFile, while raw RFB would need the far
 # weaker 8-character VNC auth.
 #
-# TLS (VNC_TLS=1, the default) is not decoration. Browsers expose
+# TLS (KASMVNC_TLS=1, the default) is not decoration. Browsers expose
 # navigator.clipboard only in a secure context: HTTPS anywhere, or plain HTTP
 # on localhost and nowhere else. Serving plain HTTP to a remote machine
 # therefore breaks copy/paste silently, with no error anywhere -- so any
 # deployment you reach over a network needs this on.
 #
-# VNC_TLS=0 falls back to plain HTTP. Only sane when you reach the port
+# KASMVNC_TLS=0 falls back to plain HTTP. Only sane when you reach the port
 # exclusively via localhost, either on the same machine or through an SSH
 # tunnel that terminates at 127.0.0.1 on your end.
 set -euo pipefail
@@ -30,7 +30,7 @@ args=(
     -SecurityTypes None
 )
 
-if [[ "${VNC_TLS:-1}" == "1" ]]; then
+if [[ "${KASMVNC_TLS:-${VNC_TLS:-1}}" == "1" ]]; then
     CERT_DIR="${HOME}/.vnc-tls"
     if [[ ! -s "${CERT_DIR}/kasmvnc.crt" || ! -s "${CERT_DIR}/kasmvnc.key" ]]; then
         echo "[vnc] TLS requested but no certificate found in ${CERT_DIR}" >&2

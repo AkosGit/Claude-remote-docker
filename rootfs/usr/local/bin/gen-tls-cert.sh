@@ -17,11 +17,19 @@ set -euo pipefail
 CERT_DIR="${1:?usage: gen-tls-cert.sh <dir>}"
 CRT="${CERT_DIR}/kasmvnc.crt"
 KEY="${CERT_DIR}/kasmvnc.key"
+COMBINED="${CERT_DIR}/kasmvnc.pem"
 
 mkdir -p "${CERT_DIR}"
 
 if [[ -s "${CRT}" && -s "${KEY}" ]]; then
     echo "[tls] reusing existing certificate in ${CERT_DIR}"
+    # An older cert predates the combined PEM; rebuild it rather than leaving
+    # x11vnc without one.
+    if [[ ! -s "${COMBINED}" ]]; then
+        cat "${KEY}" "${CRT}" > "${COMBINED}"
+        chmod 600 "${COMBINED}"
+        echo "[tls] rebuilt combined PEM for x11vnc"
+    fi
     exit 0
 fi
 
@@ -57,4 +65,12 @@ openssl req -x509 -nodes -newkey rsa:2048 \
 
 chmod 600 "${KEY}"
 chmod 644 "${CRT}"
+
+# x11vnc's -ssl wants one PEM holding both key and certificate, unlike
+# KasmVNC which takes them as separate files. Same key material either way, so
+# both servers present an identical certificate and VNC_TLS_SAN covers both.
+cat "${KEY}" "${CRT}" > "${COMBINED}"
+chmod 600 "${COMBINED}"
+
 echo "[tls] certificate written to ${CRT}"
+echo "[tls] combined PEM for x11vnc written to ${COMBINED}"
