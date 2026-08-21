@@ -1,3 +1,4 @@
 .env
 workspace/*
 !workspace/.gitkeep
+.DS_Store
