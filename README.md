@@ -13,7 +13,9 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | Google Chrome | **amd64 only.** For the Claude in Chrome extension. On arm64, Chromium fills this role. |
 | Playwright MCP | `@playwright/mcp` attached to the visible Chromium, so you watch Claude click. |
 | ntfy MCP | `send_notification` and `notification_status` tools that push to your phone. |
-| Toolchain | git, GitHub CLI (`gh`), Node.js 22 (`node`, `npm`, `npx`), Python 3, `uv`. |
+| x11vnc | Re-exports the *same* `:1` display over raw RFB on 5901, for native VNC clients. Not a second X server, so no second desktop. |
+| Toolchain | git, GitHub CLI (`gh`), Node.js 22 (`node`, `npm`, `npx`), Python 3, `uv`, `opencode`. |
+| Antigravity | Google's IDE. **amd64 only** — Google publishes no arm64 Linux build, so arm64 skips it and says so. |
 
 ## Quick start
 
@@ -89,6 +91,41 @@ Chromium is started by XFCE autostart rather than by supervisord (it needs the s
 docker compose exec -u claude claude-desktop restart-browser
 ```
 
+## Two ways in, one desktop
+
+Both servers show the **same** session — same windows, same Claude Desktop instance. Move a window in one and it moves in the other.
+
+| | Port | Client | Auth |
+| --- | --- | --- | --- |
+| KasmVNC (web) | 6080 | any browser | username + password |
+| x11vnc (native) | 5901 | Screen Sharing, bVNC, TigerVNC Viewer | password only |
+
+KasmVNC is an X server; x11vnc is not — it attaches to the display KasmVNC already created and re-exports it. That distinction is why this works. Running a *second* X server instead (TightVNC, another Xkasmvnc) would give you a second, separate desktop, and with a shared `HOME` you would get two Claude Desktops fighting over a single-instance lock and two Chromiums fighting over `SingletonLock`.
+
+KasmVNC cannot serve raw RFB itself, incidentally: it accepts `-rfbport` and then ignores it, opening no listener. It is websocket-only. That is why x11vnc exists here at all.
+
+### TLS: one switch per server
+
+They pull in opposite directions, so there are two variables:
+
+| | Default | Why |
+| --- | --- | --- |
+| `KASMVNC_TLS` | `1` | Keep it on. `navigator.clipboard` exists only in a secure context, so turning it off and browsing by IP silently kills copy/paste. |
+| `X11VNC_TLS` | follows `VNC_TLS` | `1` wraps RFB in TLS, but then **only** VNC-over-SSL clients connect (bVNC Secure, SSVNC) — macOS Screen Sharing and ordinary clients just hang, waiting on a ClientHello that never comes. `0` is right when the traffic already rides ZeroTier, Tailscale, or an SSH tunnel. |
+
+Both share one certificate, so `VNC_TLS_SAN` covers whichever are on. `VNC_TLS` is still honoured as a fallback for both, so older `.env` files keep working.
+
+### Password limits, measured
+
+| | Min | Max | Truncation |
+| --- | --- | --- | --- |
+| `VNC_PASSWORD` (web) | 1 | ~180 | none |
+| `X11VNC_PASSWORD` (native) | 1 | **8, hard** | **silent past 8** |
+
+`kasmvncpasswd` refuses anything under 6 characters, but that is CLI input validation only — the file is `user:hash:perms` with a SHA-256 crypt hash and a fixed `kasm` salt, so the entrypoint writes it directly when needed.
+
+The native ceiling is the protocol: RFB VncAuth is DES with an 8-byte key. Storing `abcdefghWXYZ` and `abcdefgh` produces byte-identical files, so a 20-character password there buys exactly 8 characters of security with no warning from any client. The entrypoint says so out loud whenever you set more than 8.
+
 ## Clipboard and file transfer
 
 **Copy/paste is seamless** — ordinary Cmd+C on your Mac, Cmd+V in the desktop, and back. This is why the image uses KasmVNC rather than noVNC: noVNC has no `navigator.clipboard` support in any released version (I checked 1.7.0, not just Debian's 1.3.0), so its clipboard is a manual paste-into-a-textarea panel. KasmVNC's web UI uses the real clipboard API.
@@ -116,13 +153,34 @@ ssh -N -L 6080:127.0.0.1:6080 you@your-server
 
 The web UI can also download files the desktop places in `~/Downloads`. There is no upload through the web UI: that is a Kasm Workspaces (commercial) feature, absent from the open-source KasmVNC. Use the bind mount instead.
 
+## Exposing it beyond localhost
+
+`BIND_ADDR` controls the host interface for **both** ports; it defaults to `127.0.0.1` so a careless `up` never publishes the desktop.
+
+The best option is an encrypted overlay — ZeroTier or Tailscale — rather than a LAN address. Only network members can route to it, the traffic is already encrypted, and nothing is exposed to the LAN:
+
+```bash
+BIND_ADDR=192.168.195.247       # your ZeroTier/Tailscale address
+VNC_TLS_SAN=192.168.195.247     # must match, or Chrome hard-rejects the cert
+KASMVNC_TLS=1
+X11VNC_TLS=0                    # the overlay already encrypts it
+```
+
+`BIND_ADDR` must be an address that exists on the host, or Docker refuses to start with `Can't assign requested address`. And after changing `VNC_TLS_SAN`, reissue the certificate — the old one is kept otherwise:
+
+```bash
+docker compose exec claude-desktop rm -rf /home/claude/.vnc-tls && docker compose restart
+```
+
 ## Configuration
 
 Everything is set through `.env`. See `.env.example` for the full list; the ones you are most likely to touch:
 
 - `NTFY_TOPIC` / `NTFY_SERVER` / `NTFY_TOKEN` — push notification target.
 - `VNC_USER` / `VNC_PASSWORD` — web UI credentials. This is real basic auth, so there is no 8-character ceiling; leave the password blank to get a random one printed at boot.
-- `VNC_TLS` / `VNC_TLS_SAN` / `BIND_ADDR` — see the clipboard section; these decide whether copy/paste works remotely.
+- `KASMVNC_TLS` / `X11VNC_TLS` / `VNC_TLS_SAN` / `BIND_ADDR` — see above; these decide whether copy/paste works remotely and which VNC clients can connect.
+- `VNC_USER` / `VNC_PASSWORD` / `X11VNC_PASSWORD` — credentials; see the limits table.
+- `SESSION_USER` — who the desktop runs as, `root` by default.
 - `VNC_RESOLUTION` — defaults to `1920x1080`.
 - `VNC_FRAMERATE` — updates per second sent to the browser; defaults to `30`.
 - `CHROMIUM_START_URL` — the page Chromium opens on launch.
@@ -160,6 +218,9 @@ docker-compose.yml                            ports, volume, shm_size, healthche
 rootfs/etc/supervisor/conf.d/supervisord.conf KasmVNC, XFCE
 rootfs/usr/local/bin/entrypoint.sh            seeds the home volume, writes the web UI credentials
 rootfs/usr/local/bin/start-*.sh               one wrapper per service; also the target of the menu .desktop entries
+rootfs/usr/local/bin/start-x11vnc.sh          native VNC onto the same :1 display
+rootfs/usr/local/bin/start-antigravity.sh     Antigravity (amd64 only)
+rootfs/usr/share/applications/                menu entries this image adds
 rootfs/usr/local/bin/gen-tls-cert.sh          self-signed cert, generated once into the home volume
 rootfs/usr/local/bin/healthcheck.sh           scheme-aware (http vs https) container healthcheck
 rootfs/usr/local/bin/restart-browser          restarts Chromium (autostarted, so not under supervisord)
@@ -187,6 +248,14 @@ Note that `primary_clipboard_enabled` is off by default, so X middle-click PRIMA
 **Chrome rejects the certificate outright instead of warning.** The address you are browsing to is not in the cert's `subjectAltName`. Put it in `VNC_TLS_SAN`, delete `/home/claude/.vnc-tls` in the container, and restart.
 
 **An app launches from autostart but not from the XFCE application menu.** Fixed in the image, but worth knowing if you add another app. The `.desktop` files shipped by the Claude and Chromium packages `Exec` the raw binaries with no `--no-sandbox`, and both Electron and Chromium refuse to start as root without it — they die with a trace trap. Autostart worked because it goes through the wrappers in `/usr/local/bin`. The Dockerfile now rewrites every `Exec=` line in those desktop files, including the Desktop Action entries ("New Window" and friends), to point at the same wrappers. Any new GUI app you add needs the same treatment.
+
+**A VNC client connects but nothing happens.** `X11VNC_TLS=1` and the client does not speak VNC-over-SSL. The server is waiting for a TLS ClientHello, which looks exactly like a hang. Use bVNC Secure or SSVNC, or set `X11VNC_TLS=0`.
+
+**Port 5901 accepts the connection but never responds.** x11vnc's SSL helper occasionally wedges — it is version 0.9.16, unmaintained since 2019. Restart just that service; the web UI is unaffected:
+
+```bash
+docker compose exec -u 0 claude-desktop supervisorctl restart x11vnc
+```
 
 **A service dies immediately with `Permission denied` (exit 126).** The scripts in `rootfs/usr/local/bin/` need mode `0755`, not just the execute bit — a `#!/bin/bash` script has to be *readable* by the user running it. The Dockerfile sets the mode absolutely for this reason. If you add a script, `chmod 0755` it.
 
