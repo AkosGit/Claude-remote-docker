@@ -85,6 +85,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dbus-x11 x11-xserver-utils x11-utils xdg-utils \
         fonts-dejavu-core fonts-liberation \
         xclip xsel \
+        x11vnc \
         libnotify-bin \
     && rm -rf /var/lib/apt/lists/*
 
@@ -134,6 +135,46 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends /tmp/claude-desktop.deb \
     && rm -f /tmp/claude-desktop.deb \
     && rm -rf /var/lib/apt/lists/*
+
+# --- opencode ----------------------------------------------------------------
+# Terminal coding agent. The npm package fetches the right platform binary on
+# install, so this works on both architectures.
+RUN npm install -g opencode-ai \
+    && opencode --version
+
+# --- Antigravity (amd64 only) ------------------------------------------------
+# Google publishes no arm64 Linux build -- the arm64 URL is a hard 404 -- so
+# this mirrors the Google Chrome handling: install on amd64, note the absence
+# on arm64 rather than failing the build.
+#
+# The download URL is version-pinned and Google rotates it, so a hardcoded URL
+# eventually 404s. Build tries the pinned URL first for reproducibility, then
+# falls back to scraping the current one off the download page.
+ARG ANTIGRAVITY_URL=https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.23.2-4781536860569600/linux-x64/Antigravity.tar.gz
+RUN set -eux; \
+    if [ "${TARGETARCH}" != "amd64" ]; then \
+        echo "Antigravity: no upstream arm64 build; skipping on ${TARGETARCH}." \
+            > /etc/antigravity-notes; \
+        cat /etc/antigravity-notes; \
+    else \
+        url="${ANTIGRAVITY_URL}"; \
+        if ! curl -fsIL --max-time 30 "$url" >/dev/null 2>&1; then \
+            echo "Pinned Antigravity URL is dead; scraping the download page."; \
+            url="$(curl -fsSL --compressed --max-time 30 https://antigravity.google/download/linux \
+                   | grep -oE 'https://[^"'"'"']*linux-x64/Antigravity\.tar\.gz' \
+                   | head -1)"; \
+            test -n "$url"; \
+        fi; \
+        echo "Antigravity: $url"; \
+        curl -fsSL --max-time 600 -o /tmp/antigravity.tar.gz "$url"; \
+        mkdir -p /opt; \
+        tar xzf /tmp/antigravity.tar.gz -C /opt; \
+        rm -f /tmp/antigravity.tar.gz; \
+        mv /opt/Antigravity /opt/antigravity; \
+        test -x /opt/antigravity/antigravity; \
+        ln -sf /opt/antigravity/bin/antigravity /usr/local/bin/antigravity; \
+        echo "$url" > /etc/antigravity-notes; \
+    fi
 
 # --- GitHub CLI --------------------------------------------------------------
 RUN set -eux; \
@@ -214,6 +255,7 @@ RUN useradd -m -u 1000 -s /bin/bash claude \
 # Everything user-facing lands in /opt/skel, NOT /home/claude: the home volume
 # is mounted over /home/claude at runtime and would hide anything baked here.
 # entrypoint.sh seeds home from skel on first boot.
+COPY rootfs/usr/share/applications/ /usr/share/applications/
 COPY rootfs/usr/local/bin/ /usr/local/bin/
 COPY rootfs/etc/supervisor/conf.d/ /etc/supervisor/conf.d/
 COPY rootfs/opt/skel/ /opt/skel/

@@ -4,7 +4,7 @@
 # self-signed certificate.
 set -uo pipefail
 
-if [[ "${VNC_TLS:-1}" == "1" ]]; then
+if [[ "${KASMVNC_TLS:-${VNC_TLS:-1}}" == "1" ]]; then
     url="https://127.0.0.1:${NOVNC_PORT:-6080}/"
 else
     url="http://127.0.0.1:${NOVNC_PORT:-6080}/"

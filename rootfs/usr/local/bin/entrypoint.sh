@@ -75,18 +75,91 @@ if [[ -z "${VNC_PASSWORD:-}" ]]; then
     log "==============================================="
 fi
 
-# kasmvncpasswd reads the password twice, as if typed at a prompt.
-# -w grants write (input) permission, -o marks the account owner.
-printf '%s\n%s\n' "${VNC_PASSWORD}" "${VNC_PASSWORD}" \
-    | kasmvncpasswd -u "${VNC_USER}" -wo "${HOME_DIR}/.kasmpasswd" >/dev/null
-chmod 600 "${HOME_DIR}/.kasmpasswd"
+# kasmvncpasswd refuses passwords under 6 characters. That limit is input
+# validation in the CLI tool, not a property of the file format: the file is
+# plain `user:hash:perms` where hash is standard SHA-256 crypt with the fixed
+# salt "kasm". Verified by reproducing a kasmvncpasswd-written hash byte for
+# byte with `openssl passwd -5 -salt kasm`.
+#
+# So short passwords are honoured by writing the entry directly. The supported
+# tool is still used whenever it will accept the input, so the normal path stays
+# on the vendor's own code and only the awkward case takes the bypass.
+write_kasm_password() {
+    local user="$1" pw="$2" file="$3"
+    if [[ ${#pw} -ge 6 ]]; then
+        printf '%s\n%s\n' "${pw}" "${pw}" | kasmvncpasswd -u "${user}" -wo "${file}" >/dev/null
+    else
+        log "NOTE: password is ${#pw} characters. kasmvncpasswd enforces a 6"
+        log "      character minimum, so the entry is being written directly."
+        log "      A password this short is weak -- fine for a loopback-bound"
+        log "      desktop, not for one reachable over a network."
+        local hash
+        hash="$(openssl passwd -5 -salt kasm "${pw}")"
+        printf '%s:%s:wo\n' "${user}" "${hash}" > "${file}"
+    fi
+    chmod 600 "${file}"
+}
+
+write_kasm_password "${VNC_USER}" "${VNC_PASSWORD}" "${HOME_DIR}/.kasmpasswd"
+
+# --- x11vnc password ----------------------------------------------------------
+# Native VNC clients reach the SAME desktop through x11vnc.
+#
+# It has its own variable because the two servers cannot share one value
+# sensibly: classic RFB VncAuth is DES with an 8-byte key, so it has a hard
+# 8-character ceiling and no username field at all, while the web UI takes a
+# real username and a password of any practical length.
+#
+# X11VNC_PASSWORD wins if set; otherwise this falls back to VNC_PASSWORD, so
+# the simple case still needs only one value.
+X11VNC_PW_FULL="${X11VNC_PASSWORD:-${VNC_PASSWORD}}"
+X11VNC_PW="${X11VNC_PW_FULL:0:8}"
+
+if [[ -z "${X11VNC_PW}" ]]; then
+    log "WARNING: no x11vnc password could be derived; x11vnc will not start."
+else
+    mkdir -p "${HOME_DIR}/.vnc"
+    x11vnc -storepasswd "${X11VNC_PW}" "${HOME_DIR}/.vnc/x11vnc.passwd" >/dev/null 2>&1
+    chmod 600 "${HOME_DIR}/.vnc/x11vnc.passwd"
+    log "x11vnc: native VNC on port ${X11VNC_PORT:-5901}"
+    log "  password: ${X11VNC_PW}"
+    if [[ -n "${X11VNC_PASSWORD:-}" ]]; then
+        log "  source:   X11VNC_PASSWORD"
+    else
+        log "  source:   VNC_PASSWORD"
+    fi
+    log "  the VNC protocol has no username field -- leave it blank"
+    # Truncation past 8 characters is silent, so it has to be said out loud.
+    if [[ ${#X11VNC_PW_FULL} -gt 8 ]]; then
+        log "  NOTE: you set ${#X11VNC_PW_FULL} characters, but VNC uses only the first 8."
+        log "        Type exactly '"'"'${X11VNC_PW}'"'"' in your VNC client."
+    fi
+fi
 
 # KasmVNC's web UI can download files the desktop puts here.
 mkdir -p "${HOME_DIR}/Downloads"
 
-# --- TLS certificate ----------------------------------------------------------
-# Lives in the home volume so the browser only has to be told to trust it once.
-if [[ "${VNC_TLS:-1}" == "1" ]]; then
+# --- TLS ----------------------------------------------------------------------
+# One variable per server, because the two have opposite constraints and a
+# single switch forced a bad trade:
+#
+#   KASMVNC_TLS - the web UI. Wants to stay on: navigator.clipboard only exists
+#                 in a secure context, so turning TLS off over a network
+#                 silently kills copy/paste with no error anywhere.
+#   X11VNC_TLS  - the native VNC port. Wants to stay off unless you need it:
+#                 macOS Screen Sharing and ordinary VNC clients cannot speak
+#                 VNC-over-SSL and simply hang against it. Over an encrypted
+#                 overlay (ZeroTier, Tailscale) or an SSH tunnel the stream is
+#                 already encrypted, so this costs little.
+#
+# VNC_TLS is still honoured as the fallback for both, so configs written before
+# the split keep working rather than silently changing behaviour.
+KASMVNC_TLS="${KASMVNC_TLS:-${VNC_TLS:-1}}"
+X11VNC_TLS="${X11VNC_TLS:-${VNC_TLS:-1}}"
+export KASMVNC_TLS X11VNC_TLS
+
+# The certificate is shared, so generate it if either server wants TLS.
+if [[ "${KASMVNC_TLS}" == "1" || "${X11VNC_TLS}" == "1" ]]; then
     /usr/local/bin/gen-tls-cert.sh "${HOME_DIR}/.vnc-tls"
     if [[ -z "${VNC_TLS_SAN:-}" ]]; then
         log "NOTE: VNC_TLS_SAN is unset, so the certificate only covers"
@@ -148,12 +221,24 @@ fi
 
 log "Claude Desktop build commit: $(cat /etc/claude-desktop-build-commit 2>/dev/null || echo unknown)"
 log "Browser note: $(cat /etc/claude-desktop-arch-notes 2>/dev/null || echo unknown)"
-if [[ "${VNC_TLS:-1}" == "1" ]]; then
-    log "Session runs as: ${SESSION_USER} (uid ${SESSION_UID})"
-    log "Web desktop: https://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
+log "Session runs as: ${SESSION_USER} (uid ${SESSION_UID})"
+log "TLS: KasmVNC=${KASMVNC_TLS}  x11vnc=${X11VNC_TLS}"
+if [[ "${KASMVNC_TLS}" == "1" ]]; then
+    log "Web desktop: https://${BIND_ADDR:-localhost}:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
     log "  Self-signed certificate: expect a one-time browser warning."
 else
-    log "Web desktop: http://localhost:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
+    log "Web desktop: http://${BIND_ADDR:-localhost}:${NOVNC_PORT:-6080}/ (user: ${VNC_USER})"
+    log "  WARNING: plain HTTP. The clipboard will not work unless you reach"
+    log "           this over localhost, because navigator.clipboard needs a"
+    log "           secure context."
+fi
+if [[ "${X11VNC_TLS}" == "1" ]]; then
+    log "Native VNC: ${BIND_ADDR:-localhost}:${X11VNC_PORT:-5901} over TLS"
+    log "  Needs a VNC-over-SSL client (bVNC Secure, SSVNC)."
+    log "  macOS Screen Sharing cannot connect."
+else
+    log "Native VNC: ${BIND_ADDR:-localhost}:${X11VNC_PORT:-5901} plain RFB"
+    log "  Works with any VNC client, including macOS Screen Sharing."
 fi
 
 export SESSION_USER

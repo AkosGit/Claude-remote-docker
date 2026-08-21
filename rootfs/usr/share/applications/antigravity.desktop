@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Antigravity
+Comment=Google Antigravity IDE
+Exec=/usr/local/bin/start-antigravity.sh %F
+Icon=antigravity
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true
