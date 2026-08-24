@@ -212,6 +212,21 @@ RUN printf '%s\n' \
     > /etc/chromium.d/00-container-root-no-sandbox \
     && chmod 0644 /etc/chromium.d/00-container-root-no-sandbox
 
+# --- GitHub Desktop ----------------------------------------------------------
+# GitHub publishes no Linux build. shiftkey/desktop is the long-standing
+# community fork and, unlike Antigravity, ships both amd64 and arm64 debs -- so
+# this needs no architecture branch.
+ARG GITHUB_DESKTOP_VERSION=3.4.13-linux1
+RUN set -eux; \
+    url="https://github.com/shiftkey/desktop/releases/download/release-${GITHUB_DESKTOP_VERSION}/GitHubDesktop-linux-${TARGETARCH}-${GITHUB_DESKTOP_VERSION}.deb"; \
+    echo "GitHub Desktop: $url"; \
+    wget -q -O /tmp/github-desktop.deb "$url"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/github-desktop.deb; \
+    rm -f /tmp/github-desktop.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    command -v github-desktop
+
 # --- Fix the application-menu launchers --------------------------------------
 # The .desktop files shipped by the Claude and Chromium packages Exec the raw
 # binaries, with no --no-sandbox. Electron and Chromium both refuse to start as
@@ -238,6 +253,9 @@ for path in glob.glob("/usr/share/applications/*claude*.desktop"):
 
 for path in glob.glob("/usr/share/applications/*chromium*.desktop"):
     rewrite(path, "/usr/local/bin/start-chromium.sh")
+
+for path in glob.glob("/usr/share/applications/*github*desktop*.desktop"):
+    rewrite(path, "/usr/local/bin/start-github-desktop.sh")
 
 PYEOF
 

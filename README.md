@@ -13,6 +13,7 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | Playwright MCP | `@playwright/mcp` attached to the visible Chromium, so you watch Claude click. |
 | ntfy MCP | `send_notification` and `notification_status` tools that push to your phone. |
 | x11vnc | Re-exports the *same* `:1` display over raw RFB on 5901, for native VNC clients. Not a second X server, so no second desktop. |
+| GitHub Desktop | Community Linux build ([shiftkey/desktop](https://github.com/shiftkey/desktop)) — GitHub ships no official Linux release. Both architectures. |
 | Toolchain | git, GitHub CLI (`gh`), Node.js 22 (`node`, `npm`, `npx`), Python 3, `uv`, `opencode`. |
 | Antigravity | Google's IDE. **amd64 only** — Google publishes no arm64 Linux build, so arm64 skips it and says so. |
 
