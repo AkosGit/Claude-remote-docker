@@ -8,7 +8,7 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | --- | --- |
 | XFCE desktop | Minimal session: window manager, panel, terminal, file manager. No `xfce4-goodies`. |
 | KasmVNC | `Xkasmvnc` is the X server, the websocket transport, and the web client in one process. Serves HTTPS at `https://localhost:6080/` behind basic auth. Chosen over noVNC for seamless clipboard — see below. |
-| Claude Desktop | Unofficial Linux build (see caveat below). Launches automatically with the session. The installed binary is `claude-desktop-unofficial`, not `claude-desktop`. |
+| Claude Desktop | **Official** Anthropic Linux package from `downloads.claude.ai`. Both architectures. Launches automatically with the session. |
 | Chromium | The only browser. Visible in the desktop, exposing CDP on `127.0.0.1:9222` — both what Claude drives and where you install the Claude extension. |
 | Playwright MCP | `@playwright/mcp` attached to the visible Chromium, so you watch Claude click. |
 | ntfy MCP | `send_notification` and `notification_status` tools that push to your phone. |
@@ -197,7 +197,11 @@ By default the whole desktop session runs as **root** — KasmVNC, XFCE, and the
 
 ## Caveats, honestly
 
-**Claude Desktop has no official Linux build.** Anthropic ships Mac and Windows only. This image uses [`aaddrick/claude-desktop-debian`](https://github.com/aaddrick/claude-desktop-debian), which repacks the official Windows installer against Linux Electron. It works well, but it is unofficial and unsupported: when Anthropic changes the installer format, builds break until upstream catches up. Bump `CLAUDE_DEB_REF` in `docker-compose.yml` to pick up their fixes. If reliability matters more than having the GUI, the Claude Code CLI is officially supported and installs with a single `npm i -g @anthropic-ai/claude-code`.
+**Claude Desktop is the official Linux build.** Anthropic publishes an apt repository at `downloads.claude.ai/claude-desktop/apt/stable` covering amd64 and arm64.
+
+This replaced an unofficial repack of the Windows installer ([`aaddrick/claude-desktop-debian`](https://github.com/aaddrick/claude-desktop-debian)), which stopped building once Anthropic reshaped the Electron bundle and that project's patch anchors no longer matched. Pinning it did not help: the artifact being patched is downloaded fresh on every build.
+
+The `.deb` is pulled from the pool URL and checksum-verified rather than added as an apt source — the repository publishes a signed `InRelease` but no public key at any discoverable URL, so apt could not verify it. The SHA256 comes from the repository's own `Packages` index at build time. Pin a version with `CLAUDE_DESKTOP_VERSION`.
 
 **Sandboxes are disabled.** Both Chromium and Electron run with `--no-sandbox`, because their sandboxes need privileges a default container does not have. The container is your isolation boundary, not the browser. Treat anything running inside as having the container's full access.
 
@@ -210,7 +214,7 @@ By default the whole desktop session runs as **root** — KasmVNC, XFCE, and the
 ## Layout
 
 ```
-Dockerfile                                    two stages: build the .deb, then the runtime image
+Dockerfile                                    single stage; Claude Desktop comes from Anthropic's apt pool
 docker-compose.yml                            ports, volume, shm_size, healthcheck
 .env.example                                  all configuration
 rootfs/etc/supervisor/conf.d/supervisord.conf KasmVNC, XFCE
@@ -224,6 +228,7 @@ rootfs/usr/local/bin/healthcheck.sh           scheme-aware (http vs https) conta
 rootfs/usr/local/bin/restart-browser          restarts Chromium (autostarted, so not under supervisord)
 rootfs/opt/ntfy-mcp/server.py                 the notification MCP server (env, then ~/.config/ntfy-mcp.env)
 rootfs/opt/skel/                              seeded into /home/claude on first boot
+rootfs/usr/local/bin/xfce-defaults.sh         first-run XFCE corrections (zoom, dock autohide)
 workspace/                                    bind-mounted to /workspace
 ```
 
@@ -265,19 +270,7 @@ docker compose exec -u 0 claude-desktop supervisorctl restart x11vnc
 
 Do not be misled by `docker compose exec ... env | grep NTFY` showing the variable: an interactive shell gets the container environment directly, while the MCP server sits at the end of a long spawn chain that may have dropped it. `notification_status` reports which source it actually used.
 
-**Claude Desktop shows nothing useful in `docker compose logs`.** Its launcher redirects app output to a file instead of stdout:
-
-```bash
-docker compose exec -u claude claude-desktop tail -50 /home/claude/.cache/claude-desktop-debian/launcher.log
-```
-
-There is also a built-in diagnostic:
-
-```bash
-docker compose exec -u claude claude-desktop claude-desktop-unofficial --doctor
-```
-
-**You have to log into Claude Desktop again after every restart.** Expected by default. The container has no keyring, so the app declines to persist the session token rather than store it weakly. Set `CLAUDE_PASSWORD_STORE=basic` in `.env` to keep the login, accepting that the token then sits on disk in the home volume with weak protection.
+**You have to log into Claude Desktop again after every restart.** Expected by default. The container has no keyring, so the app declines to persist the session token rather than store it weakly. `CLAUDE_PASSWORD_STORE` no longer helps — it was read by the unofficial build's launcher script, which the official package does not have.
 
 **Chromium shows a yellow "unsupported command-line flag: --no-sandbox" bar.** Expected and cosmetic. See the sandbox caveat above.
 

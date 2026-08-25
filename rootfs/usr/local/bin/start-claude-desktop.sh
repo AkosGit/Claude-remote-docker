@@ -16,9 +16,9 @@ set -euo pipefail
 
 export DISPLAY=:1
 
-# Headless container: there is no GPU, and Chromium's GPU process can hit a
-# FATAL exhaustion loop trying to use one. The launcher honours this env var.
-export CLAUDE_DISABLE_GPU="${CLAUDE_DISABLE_GPU:-1}"
+# --disable-gpu is passed on the command line rather than via
+# CLAUDE_DISABLE_GPU: that variable was read by the unofficial build's launcher
+# script, which the official Anthropic package does not have.
 
 # CLAUDE_PASSWORD_STORE is deliberately NOT defaulted here. Without it, the
 # app's own os_crypt autodetection decides how to persist your session, and it
@@ -44,4 +44,4 @@ for _ in $(seq 1 60); do
     sleep 0.5
 done
 
-exec "${APP}" --no-sandbox "$@"
+exec "${APP}" --no-sandbox --disable-gpu "$@"

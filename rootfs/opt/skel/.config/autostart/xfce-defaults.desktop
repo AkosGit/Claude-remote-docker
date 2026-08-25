@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Container XFCE defaults
+Comment=Disable desktop zoom and dock autohide on first run
+Exec=/usr/local/bin/xfce-defaults.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true

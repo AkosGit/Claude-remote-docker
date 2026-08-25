@@ -236,7 +236,7 @@ if [[ "$(df -k /dev/shm 2>/dev/null | awk 'NR==2 {print $2}')" == "65536" ]]; th
     log "         or Chromium tabs will crash."
 fi
 
-log "Claude Desktop build commit: $(cat /etc/claude-desktop-build-commit 2>/dev/null || echo unknown)"
+log "Claude Desktop: $(cat /etc/claude-desktop-version 2>/dev/null || echo unknown) (official Anthropic build)"
 log "Session runs as: ${SESSION_USER} (uid ${SESSION_UID})"
 log "TLS: KasmVNC=${KASMVNC_TLS}  x11vnc=${X11VNC_TLS}"
 if [[ "${KASMVNC_TLS}" == "1" ]]; then

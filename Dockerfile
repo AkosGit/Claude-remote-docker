@@ -3,7 +3,7 @@
 # Claude VNC Desktop
 # ------------------
 # A Debian-based container running an XFCE desktop over VNC/noVNC, with:
-#   - Claude Desktop (unofficial Linux repack of the official Windows build)
+#   - Claude Desktop, from Anthropic's official Linux apt repository
 #   - Chromium wired for CDP control via Playwright MCP
 #   - git, Node.js 22 (node/npm/npx), Python 3, uv
 #   - An ntfy MCP server so Claude can push notifications to your phone
@@ -11,59 +11,7 @@
 # Multi-arch: builds natively on amd64 and arm64.
 
 # =============================================================================
-# Stage 1: build the Claude Desktop .deb
-# =============================================================================
-# Claude Desktop has no official Linux build. aaddrick/claude-desktop-debian
-# repacks the official Windows installer (extract nupkg -> patch app.asar ->
-# stub the Windows-only native bindings -> rebuild against Linux Electron).
-#
-# We pin to a commit so builds are reproducible. To pick up upstream fixes
-# after Anthropic changes their installer format, bump CLAUDE_DEB_REF.
-FROM debian:bookworm-slim AS claude-builder
-
-ARG CLAUDE_DEB_REPO=https://github.com/aaddrick/claude-desktop-debian.git
-ARG CLAUDE_DEB_REF=main
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget git sudo file \
-        p7zip-full icoutils imagemagick \
-        dpkg-dev fakeroot build-essential \
-        python3 \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Upstream's build.sh refuses to run as root and calls sudo itself.
-RUN useradd -m -s /bin/bash builder \
-    && echo 'builder ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/builder \
-    && chmod 0440 /etc/sudoers.d/builder
-
-USER builder
-WORKDIR /home/builder
-
-RUN git clone "${CLAUDE_DEB_REPO}" claude-desktop-debian \
-    && cd claude-desktop-debian \
-    && git checkout "${CLAUDE_DEB_REF}" \
-    && git rev-parse HEAD > /home/builder/CLAUDE_DEB_COMMIT
-
-# Electron is fetched during the build; needs network.
-RUN cd /home/builder/claude-desktop-debian \
-    && chmod +x ./build.sh \
-    && ./build.sh --build deb --clean yes
-
-# The script's output path has moved between upstream revisions, so find it
-# rather than hardcoding. Fail loudly if nothing turned up.
-RUN set -eux; \
-    deb="$(find /home/builder/claude-desktop-debian -name 'claude-desktop*.deb' -print -quit)"; \
-    test -n "$deb"; \
-    mkdir -p /home/builder/out; \
-    cp "$deb" /home/builder/out/claude-desktop.deb; \
-    ls -lh /home/builder/out/
-
-# =============================================================================
-# Stage 2: the runtime image
+# The runtime image (single stage)
 # =============================================================================
 FROM debian:bookworm-slim AS final
 
@@ -116,13 +64,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Claude Desktop ----------------------------------------------------------
-COPY --from=claude-builder /home/builder/out/claude-desktop.deb /tmp/claude-desktop.deb
-COPY --from=claude-builder /home/builder/CLAUDE_DEB_COMMIT /etc/claude-desktop-build-commit
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends /tmp/claude-desktop.deb \
-    && rm -f /tmp/claude-desktop.deb \
-    && rm -rf /var/lib/apt/lists/*
+# Installed from Anthropic's OFFICIAL Linux repository, which publishes both
+# amd64 and arm64. This replaces a two-stage unofficial repack of the Windows
+# installer (aaddrick/claude-desktop-debian), which no longer builds at all:
+# Anthropic reshaped the Electron bundle and that project's patch anchors stop
+# matching, failing with "Anchor 'cowork C1 (foreground download)' matched no
+# file under app.asar.contents/.vite/build". Pinning it did not help, because
+# the artifact being patched is downloaded fresh on every build.
+#
+# The pool .deb is fetched directly and checksum-verified rather than added as
+# an apt source: the repository publishes a signed InRelease but no public key
+# at any discoverable URL, so apt could not verify it either way. The SHA256 is
+# read from the repository's own Packages index at build time, so there is no
+# per-architecture hash hardcoded here to rot.
+ARG CLAUDE_DESKTOP_VERSION=1.34493.1
+ARG CLAUDE_APT_BASE=https://downloads.claude.ai/claude-desktop/apt/stable
+RUN set -eux; \
+    idx="$(curl -fsSL "${CLAUDE_APT_BASE}/dists/stable/main/binary-${TARGETARCH}/Packages")"; \
+    pool="pool/main/c/claude-desktop/claude-desktop_${CLAUDE_DESKTOP_VERSION}_${TARGETARCH}.deb"; \
+    sha="$(printf '%s' "$idx" | awk -v f="$pool" 'BEGIN{RS=""} $0 ~ ("Filename: " f) {for(i=1;i<=NF;i++) if($i=="SHA256:") print $(i+1)}')"; \
+    test -n "$sha"; \
+    echo "Claude Desktop ${CLAUDE_DESKTOP_VERSION} ${TARGETARCH} sha256=$sha"; \
+    curl -fsSL -o /tmp/claude-desktop.deb "${CLAUDE_APT_BASE}/${pool}"; \
+    echo "$sha  /tmp/claude-desktop.deb" | sha256sum -c -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/claude-desktop.deb; \
+    rm -f /tmp/claude-desktop.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    echo "${CLAUDE_DESKTOP_VERSION}" > /etc/claude-desktop-version; \
+    command -v claude-desktop
 
 # --- opencode ----------------------------------------------------------------
 # Terminal coding agent. The npm package fetches the right platform binary on
