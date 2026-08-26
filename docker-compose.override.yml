@@ -1,0 +1,9 @@
+# Local resource ceilings. Without these the container is unbounded and can
+# starve a 6.4GB host into a whole-machine I/O stall.
+services:
+  claude-desktop:
+    mem_limit: 3g
+    memswap_limit: 4g
+    cpus: 2.0
+    # Must fit inside mem_limit: /dev/shm is tmpfs and counts as RAM.
+    shm_size: 1gb
