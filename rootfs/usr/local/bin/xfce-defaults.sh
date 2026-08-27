@@ -39,6 +39,10 @@ xfconf-query -c xfce4-panel -p /panels/panel-2/autohide-behavior -s 0 2>/dev/nul
 # 2.12% -> 0.49% with it off.
 xfconf-query -c xfwm4 -p /general/use_compositing -s false 2>/dev/null
 
+# GTK widget animations in Thunar and the XFCE dialogs. Same reasoning as the
+# browser motion flags: each animated frame is a screen region VNC must encode.
+xfconf-query -c xsettings -p /Gtk/EnableAnimations -n -t bool -s false 2>/dev/null
+
 mkdir -p "$(dirname "${MARKER}")"
 date -u +"applied %Y-%m-%dT%H:%M:%SZ" > "${MARKER}"
 echo "[xfce-defaults] applied container-appropriate XFCE defaults"

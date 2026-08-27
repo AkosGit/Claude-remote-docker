@@ -16,6 +16,14 @@
 #
 # The renderer caps bound a runaway tab: at most two renderer processes, one
 # process per site rather than per tab, and a 512MB V8 heap ceiling.
+#
+# The motion flags are a VNC optimisation, not a rendering one. Over RFB the
+# cost of an animation is not drawing it, it is encoding every intermediate
+# frame as a changed screen region and shipping it. Smooth scrolling turns one
+# gesture into ~20 near-full-screen updates, and --force-prefers-reduced-motion
+# makes pages honour reduced motion so their CSS animations stop too. Scrolling
+# becomes stepwise, which over a network link usually reads as more responsive
+# than smeared intermediate frames arriving late.
 set -euo pipefail
 
 export DISPLAY=:1
@@ -39,6 +47,8 @@ exec "${BROWSER}" \
     --renderer-process-limit=2 \
     --process-per-site \
     --js-flags=--max-old-space-size=512 \
+    --disable-smooth-scrolling \
+    --force-prefers-reduced-motion \
     --disable-gpu \
     --no-first-run \
     --no-default-browser-check \

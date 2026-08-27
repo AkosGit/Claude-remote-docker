@@ -217,6 +217,8 @@ Measured idle, no client connected, before and after:
 - **No `xfdesktop`.** Saves ~37 MB of wallpaper and desktop icons. You lose the desktop right-click menu; the panel menu is unaffected.
 - **Chromium is capped** when it does run: two renderers, one process per site, 512 MB V8 heap.
 - **`shm_size: 512m`, and `--disable-dev-shm-usage` is not used.** That flag saves no memory — it moves shared buffers to `/tmp`, which is the container overlay, i.e. disk.
+- **Motion is suppressed, because over VNC an animation costs encoding, not drawing.** Every intermediate frame is a changed screen region to compress and ship. Chromium and Claude Desktop get `--disable-smooth-scrolling` and `--force-prefers-reduced-motion` (the latter makes websites stop their own CSS animations), and GTK animations are off. Scrolling becomes stepwise, which over a network link usually reads as more responsive than smeared frames arriving late.
+- **KasmVNC's video encoding is enabled.** It needs ffmpeg's libraries at runtime and logged `ffmpeg: Could not open libavformat.so` without them, falling back to still-image encoding for everything. That mode is what handles exactly the high-change regions that cost most over RFB.
 
 Two things deliberately not trimmed, because apt says they take the applications with them: `xdg-desktop-portal` is a dependency of `claude-desktop`, and `gcr` of `github-desktop`.
 

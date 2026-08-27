@@ -38,4 +38,5 @@ for _ in $(seq 1 60); do
     sleep 0.5
 done
 
-exec "${APP}" --no-sandbox --disable-gpu "$@"
+exec "${APP}" --no-sandbox --disable-gpu \
+    --disable-smooth-scrolling --force-prefers-reduced-motion "$@"

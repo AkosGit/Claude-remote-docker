@@ -262,6 +262,18 @@ RUN set -eux; \
     Xkasmvnc -version 2>&1 | head -2 || true; \
     test -d /usr/share/kasmvnc/www
 
+# KasmVNC's video encoding mode needs ffmpeg's libraries at runtime. Without
+# them it logs "ffmpeg: Could not open libavformat.so" at every start and falls
+# back to still-image encoding for everything.
+#
+# That mode is what handles high-change regions -- scrolling, video, animation
+# -- which is exactly the traffic that costs the most over RFB. Worth ~30MB.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libavformat59 libavcodec59 libswscale6 libavutil57 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ldconfig -p | grep -q libavformat \
+    && ldconfig -p | grep -q libswscale
+
 # --- User --------------------------------------------------------------------
 RUN useradd -m -u 1000 -s /bin/bash claude \
     && echo 'claude ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/claude \
