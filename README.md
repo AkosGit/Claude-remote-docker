@@ -12,7 +12,7 @@ A Docker image containing a lightweight Linux desktop you reach from your browse
 | Chromium | The only browser. Visible in the desktop, exposing CDP on `127.0.0.1:9222` — both what Claude drives and where you install the Claude extension. |
 | Playwright MCP | `@playwright/mcp` attached to the visible Chromium, so you watch Claude click. |
 | ntfy MCP | `send_notification` and `notification_status` tools that push to your phone. |
-| x11vnc | Re-exports the *same* `:1` display over raw RFB on 5901, for native VNC clients. Not a second X server, so no second desktop. |
+| x0vncserver | TigerVNC's screen-scraper. Re-exports the *same* `:1` display over raw RFB on 5901 for native VNC clients. Not a second X server, so no second desktop. |
 | GitHub Desktop | Community Linux build ([shiftkey/desktop](https://github.com/shiftkey/desktop)) — GitHub ships no official Linux release. Both architectures. |
 | Toolchain | git, GitHub CLI (`gh`), Node.js 22 (`node`, `npm`, `npx`), Python 3, `uv`, `opencode`. |
 | Antigravity | Google's IDE. **amd64 only** — Google publishes no arm64 Linux build, so arm64 skips it and says so. |
@@ -98,9 +98,9 @@ Both servers show the **same** session — same windows, same Claude Desktop ins
 | | Port | Client | Auth |
 | --- | --- | --- | --- |
 | KasmVNC (web) | 6080 | any browser | username + password |
-| x11vnc (native) | 5901 | Screen Sharing, bVNC, TigerVNC Viewer | password only |
+| x0vncserver (native) | 5901 | Screen Sharing, bVNC, TigerVNC Viewer | password only |
 
-KasmVNC is an X server; x11vnc is not — it attaches to the display KasmVNC already created and re-exports it. That distinction is why this works. Running a *second* X server instead (TightVNC, another Xkasmvnc) would give you a second, separate desktop, and with a shared `HOME` you would get two Claude Desktops fighting over a single-instance lock and two Chromiums fighting over `SingletonLock`.
+KasmVNC is an X server; x0vncserver is not — it attaches to the display KasmVNC already created and re-exports it. That distinction is why this works. Running a *second* X server instead (TightVNC, another Xkasmvnc) would give you a second, separate desktop, and with a shared `HOME` you would get two Claude Desktops fighting over a single-instance lock and two Chromiums fighting over `SingletonLock`.
 
 KasmVNC cannot serve raw RFB itself, incidentally: it accepts `-rfbport` and then ignores it, opening no listener. It is websocket-only. That is why x11vnc exists here at all.
 
@@ -195,6 +195,28 @@ By default the whole desktop session runs as **root** — KasmVNC, XFCE, and the
 
 **Do not launch a single app under `sudo` while the session runs as `claude`.** It leaves root-owned files in `/home/claude` and the next non-root start fails on its own config, with an error that points nowhere near the cause. Change `SESSION_USER` instead, which chowns the home directory to match.
 
+## Resource limits
+
+Docker runs containers unbounded by default, and on a small host that matters: on a 6.4 GB machine this container was the largest consumer by far and coincided with whole-machine I/O stalls.
+
+`docker-compose.override.yml` therefore ships with conservative ceilings, and Compose picks it up automatically:
+
+```yaml
+services:
+  claude-desktop:
+    mem_limit: 3g
+    memswap_limit: 4g
+    cpus: 2.0
+    # Must fit inside mem_limit: /dev/shm is tmpfs and counts as RAM.
+    shm_size: 1gb
+```
+
+Raise them on a larger host — these suit roughly 6–8 GB of RAM.
+
+That `shm_size` comment is the trap worth knowing: `/dev/shm` is tmpfs, so it counts against `mem_limit`. Setting `shm_size` larger than the memory limit means Chromium can fill shared memory and trigger the container's own OOM killer.
+
+Verify with `docker inspect claude-vnc-desktop --format '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.ShmSize}}'`.
+
 ## Caveats, honestly
 
 **Claude Desktop is the official Linux build.** Anthropic publishes an apt repository at `downloads.claude.ai/claude-desktop/apt/stable` covering amd64 and arm64.
@@ -254,11 +276,13 @@ Note that `primary_clipboard_enabled` is off by default, so X middle-click PRIMA
 
 **A VNC client connects but nothing happens.** `X11VNC_TLS=1` and the client does not speak VNC-over-SSL. The server is waiting for a TLS ClientHello, which looks exactly like a hang. Use bVNC Secure or SSVNC, or set `X11VNC_TLS=0`.
 
-**Port 5901 accepts the connection but never responds.** x11vnc's SSL helper occasionally wedges — it is version 0.9.16, unmaintained since 2019. Restart just that service; the web UI is unaffected:
+**Port 5901 accepts the connection but never responds.** Restart just that service; the web UI is unaffected:
 
 ```bash
-docker compose exec -u 0 claude-desktop supervisorctl restart x11vnc
+docker compose exec -u 0 claude-desktop supervisorctl restart nativevnc
 ```
+
+This image used x11vnc until it proved unusable on some hosts. Debian ships 0.9.16 (2019) against libvncserver 0.9.14, and on Ubuntu 25.04 that pairing accepts connections into the kernel backlog and never calls `accept()` — they sit in `CLOSE_WAIT` with inode 0 while the process idles in `do_select`. It reproduced with a minimal `x11vnc -display :1 -rfbport 5905 -nopw`, ruling out flags and AppArmor. TigerVNC's `x0vncserver` does the same job and is maintained.
 
 **A service dies immediately with `Permission denied` (exit 126).** The scripts in `rootfs/usr/local/bin/` need mode `0755`, not just the execute bit — a `#!/bin/bash` script has to be *readable* by the user running it. The Dockerfile sets the mode absolutely for this reason. If you add a script, `chmod 0755` it.
 

@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dbus-x11 x11-xserver-utils x11-utils xdg-utils \
         fonts-dejavu-core fonts-liberation \
         xclip xsel \
-        x11vnc \
+        tigervnc-scraping-server tigervnc-tools \
         libnotify-bin \
     && rm -rf /var/lib/apt/lists/*
 

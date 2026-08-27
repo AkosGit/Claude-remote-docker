@@ -101,8 +101,8 @@ write_kasm_password() {
 
 write_kasm_password "${VNC_USER}" "${VNC_PASSWORD}" "${HOME_DIR}/.kasmpasswd"
 
-# --- x11vnc password ----------------------------------------------------------
-# Native VNC clients reach the SAME desktop through x11vnc.
+# --- native VNC password ------------------------------------------------------
+# Native VNC clients reach the SAME desktop through x0vncserver.
 #
 # It has its own variable because the two servers cannot share one value
 # sensibly: classic RFB VncAuth is DES with an 8-byte key, so it has a hard
@@ -115,12 +115,12 @@ X11VNC_PW_FULL="${X11VNC_PASSWORD:-${VNC_PASSWORD}}"
 X11VNC_PW="${X11VNC_PW_FULL:0:8}"
 
 if [[ -z "${X11VNC_PW}" ]]; then
-    log "WARNING: no x11vnc password could be derived; x11vnc will not start."
+    log "WARNING: no native VNC password could be derived; that server will not start."
 else
     mkdir -p "${HOME_DIR}/.vnc"
-    x11vnc -storepasswd "${X11VNC_PW}" "${HOME_DIR}/.vnc/x11vnc.passwd" >/dev/null 2>&1
-    chmod 600 "${HOME_DIR}/.vnc/x11vnc.passwd"
-    log "x11vnc: native VNC on port ${X11VNC_PORT:-5901}"
+    printf '%s\n' "${X11VNC_PW}" | tigervncpasswd -f > "${HOME_DIR}/.vnc/native-vnc.passwd" 2>/dev/null
+    chmod 600 "${HOME_DIR}/.vnc/native-vnc.passwd"
+    log "native VNC (x0vncserver) on port ${X11VNC_PORT:-5901}"
     log "  password: ${X11VNC_PW}"
     if [[ -n "${X11VNC_PASSWORD:-}" ]]; then
         log "  source:   X11VNC_PASSWORD"
