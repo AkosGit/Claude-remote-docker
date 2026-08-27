@@ -311,7 +311,9 @@ This image used x11vnc until it proved unusable on some hosts. Debian ships 0.9.
 
 Do not be misled by `docker compose exec ... env | grep NTFY` showing the variable: an interactive shell gets the container environment directly, while the MCP server sits at the end of a long spawn chain that may have dropped it. `notification_status` reports which source it actually used.
 
-**You have to log into Claude Desktop again after every restart.** Expected by default. The container has no keyring, so the app declines to persist the session token rather than store it weakly. `CLAUDE_PASSWORD_STORE` no longer helps — it was read by the unofficial build's launcher script, which the official package does not have.
+**You have to log into Claude Desktop again after every restart, and a "Choose password for new keyring" dialog blocks the desktop on first login.** `gnome-keyring` is present — it arrives as a dependency of `gcr`, which `github-desktop` needs — but no keyring exists and nothing would unlock it on the next start, so the prompt achieves nothing.
+
+To skip both, add `--password-store=basic` to the `exec` line in `start-claude-desktop.sh`. The token then persists, stored on disk in the home volume with weak protection. Off by default because it is a security trade worth making deliberately.
 
 **Chromium shows a yellow "unsupported command-line flag: --no-sandbox" bar.** Expected and cosmetic. See the sandbox caveat above.
 

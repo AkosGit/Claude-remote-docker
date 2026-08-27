@@ -16,17 +16,16 @@ set -euo pipefail
 
 export DISPLAY=:1
 
-# --disable-gpu is passed on the command line rather than via
-# CLAUDE_DISABLE_GPU: that variable was read by the unofficial build's launcher
-# script, which the official Anthropic package does not have.
+# No GPU in the container, so --disable-gpu is passed directly.
 
-# CLAUDE_PASSWORD_STORE is deliberately NOT defaulted here. Without it, the
-# app's own os_crypt autodetection decides how to persist your session, and it
-# will refuse weak on-disk storage rather than write tokens unsafely -- which
-# in a container with no keyring means logging in again after each restart.
-# Setting CLAUDE_PASSWORD_STORE=basic in .env trades that away for
-# convenience: the token lands on disk in the home volume with weak
-# protection. Opt in only if you accept that.
+# Session persistence is left to the app's own os_crypt autodetection. It finds
+# the gnome-keyring that arrives as a dependency of gcr and offers to create a
+# keyring -- a prompt that buys nothing here, since nothing would unlock it on
+# the next start, so logins do not survive a restart.
+#
+# Adding --password-store=basic to the exec below skips the prompt and persists
+# the token, at the cost of storing it on disk in the home volume with weak
+# protection. Left off deliberately: that is a trade to make, not inherit.
 
 APP=""
 for candidate in claude-desktop-unofficial claude-desktop; do
