@@ -1,6 +1,6 @@
 #!/bin/bash
-# Chromium is started by XFCE autostart (for D-Bus reasons), so supervisorctl
-# cannot restart it. This does.
+# Chromium is not autostarted and is not a supervisord program, so there is
+# nothing to `supervisorctl restart`. This starts or restarts it.
 set -euo pipefail
 pkill -f 'remote-debugging-port' || true
 sleep 1

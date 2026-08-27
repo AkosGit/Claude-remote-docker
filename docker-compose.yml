@@ -25,7 +25,7 @@ services:
       # in .env -- but only with VNC_TLS=1, since plain HTTP over a network
       # both leaks the session and silently disables the clipboard.
       - "${BIND_ADDR:-127.0.0.1}:${NOVNC_PORT:-6080}:6080"
-      # Native VNC (x11vnc) onto the same desktop. Classic VNC auth is weak --
+      # Native VNC (x0vncserver) onto the same desktop. Classic VNC auth is weak --
       # no username, 8-character password ceiling -- so this stays on
       # BIND_ADDR, i.e. loopback unless you deliberately change it. Reach it
       # remotely over an SSH tunnel or Tailscale, not by opening the port.
@@ -49,6 +49,17 @@ services:
     #
     # tmpfs counts against mem_limit, so this must stay well under it.
     shm_size: "512m"
+
+    # Resource ceilings. Docker runs containers unbounded by default, and on a
+    # small host that matters: this was the largest consumer on a 6.4GB machine
+    # and coincided with whole-machine I/O stalls. Sized for roughly 6-8GB of
+    # RAM; raise on a larger host.
+    #
+    # To change these for one machine without editing this file, create an
+    # untracked docker-compose.override.yml -- compose merges it automatically.
+    mem_limit: 3g
+    memswap_limit: 4g
+    cpus: 2.0
 
     # Reaping zombie processes; tini handles PID 1 duties inside.
     init: false

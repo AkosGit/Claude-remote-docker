@@ -24,11 +24,11 @@ mkdir -p "${CERT_DIR}"
 if [[ -s "${CRT}" && -s "${KEY}" ]]; then
     echo "[tls] reusing existing certificate in ${CERT_DIR}"
     # An older cert predates the combined PEM; rebuild it rather than leaving
-    # x11vnc without one.
+    # the native VNC server without one.
     if [[ ! -s "${COMBINED}" ]]; then
         cat "${KEY}" "${CRT}" > "${COMBINED}"
         chmod 600 "${COMBINED}"
-        echo "[tls] rebuilt combined PEM for x11vnc"
+        echo "[tls] rebuilt combined PEM for the native VNC server"
     fi
     exit 0
 fi
@@ -66,11 +66,12 @@ openssl req -x509 -nodes -newkey rsa:2048 \
 chmod 600 "${KEY}"
 chmod 644 "${CRT}"
 
-# x11vnc's -ssl wants one PEM holding both key and certificate, unlike
+# x0vncserver's X509 mode is given cert and key separately, but the combined
+# PEM is kept for any tool that wants one file, unlike
 # KasmVNC which takes them as separate files. Same key material either way, so
 # both servers present an identical certificate and VNC_TLS_SAN covers both.
 cat "${KEY}" "${CRT}" > "${COMBINED}"
 chmod 600 "${COMBINED}"
 
 echo "[tls] certificate written to ${CRT}"
-echo "[tls] combined PEM for x11vnc written to ${COMBINED}"
+echo "[tls] combined PEM written to ${COMBINED}"

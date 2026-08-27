@@ -199,19 +199,9 @@ By default the whole desktop session runs as **root** — KasmVNC, XFCE, and the
 
 Docker runs containers unbounded by default, and on a small host that matters: on a 6.4 GB machine this container was the largest consumer by far and coincided with whole-machine I/O stalls.
 
-`docker-compose.override.yml` therefore ships with conservative ceilings, and Compose picks it up automatically:
+`docker-compose.yml` therefore ships with conservative ceilings — `mem_limit: 3g`, `memswap_limit: 4g`, `cpus: 2.0`, `shm_size: 512m` — sized for roughly 6–8 GB of RAM. Raise them on a larger host.
 
-```yaml
-services:
-  claude-desktop:
-    mem_limit: 3g
-    memswap_limit: 4g
-    cpus: 2.0
-    # Must fit inside mem_limit: /dev/shm is tmpfs and counts as RAM.
-    shm_size: 1gb
-```
-
-Raise them on a larger host — these suit roughly 6–8 GB of RAM.
+To change them on one machine without editing the tracked file, create a `docker-compose.override.yml`; Compose merges it automatically and it is gitignored. Keep `shm_size` well under `mem_limit`: `/dev/shm` is tmpfs, so it counts as RAM.
 
 ### What the image does to stay small
 

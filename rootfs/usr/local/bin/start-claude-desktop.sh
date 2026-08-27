@@ -1,17 +1,12 @@
 #!/bin/bash
-# Claude Desktop (unofficial Linux repack).
+# Claude Desktop, from Anthropic's official Linux package.
 #
-# The .deb installs its launcher as `claude-desktop-unofficial`, not
-# `claude-desktop`, so resolve both names.
+# --no-sandbox because Electron refuses to start as root with its sandbox
+# enabled, and this session runs as root by default. --disable-gpu because
+# there is no GPU: without it the GPU process burns cycles failing, and can
+# take the window down with it.
 #
-# That launcher builds its own Electron argument list. On X11 + deb it does
-# NOT add --no-sandbox (it only does so for AppImage and Wayland), so we pass
-# it ourselves: Electron's sandbox needs privileges a default container lacks.
-# Extra arguments are appended after the launcher's own, which is what we want.
-#
-# The launcher redirects app output to ~/.cache/claude-desktop-debian/launcher.log
-# rather than stdout, so `docker compose logs` will not show app errors --
-# read that file instead. `claude-desktop-unofficial --doctor` is also useful.
+# App output goes to stdout, so `docker compose logs` shows it.
 set -euo pipefail
 
 export DISPLAY=:1
@@ -28,7 +23,7 @@ export DISPLAY=:1
 # protection. Left off deliberately: that is a trade to make, not inherit.
 
 APP=""
-for candidate in claude-desktop-unofficial claude-desktop; do
+for candidate in claude-desktop; do
     if command -v "${candidate}" >/dev/null 2>&1; then APP="${candidate}"; break; fi
 done
 if [[ -z "${APP}" ]]; then
