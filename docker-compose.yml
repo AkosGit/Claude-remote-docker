@@ -39,8 +39,16 @@ services:
       # Your code. Edit on the host, run it in the container.
       - ./workspace:/workspace
 
-    # Chromium and Electron crash on Docker's default 64MB /dev/shm.
-    shm_size: "2gb"
+    # Chromium and Electron crash on Docker's default 64MB /dev/shm, which is
+    # where their renderers exchange rendered frames with the browser process.
+    #
+    # This is deliberately real memory rather than --disable-dev-shm-usage:
+    # that flag does not save memory, it redirects the same traffic to /tmp,
+    # and /tmp here is the container overlay -- i.e. disk. Keeping it in RAM
+    # trades a little memory for markedly less I/O.
+    #
+    # tmpfs counts against mem_limit, so this must stay well under it.
+    shm_size: "512m"
 
     # Reaping zombie processes; tini handles PID 1 duties inside.
     init: false

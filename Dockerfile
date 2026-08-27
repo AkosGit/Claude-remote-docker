@@ -21,13 +21,22 @@ ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1
 
 # --- Core OS + desktop -------------------------------------------------------
-# Minimal XFCE: session, WM, desktop, panel, settings, terminal, file manager.
+# Minimal XFCE: session, WM, panel, settings, terminal, file manager.
 # Deliberately NOT installing the xfce4 metapackage or xfce4-goodies.
+#
+# xfdesktop4 is also omitted: it draws the wallpaper and desktop icons and
+# costs ~37MB resident, none of which matters when every application is
+# launched from the panel menu. The panel still provides the applications menu;
+# what you lose is the desktop-background right-click menu.
+#
+# xdg-desktop-portal and gcr are NOT trimmed despite being similar dead weight:
+# apt shows claude-desktop depends on the former and github-desktop on the
+# latter, so removing them uninstalls the applications this image exists for.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg git openssh-client openssl \
         sudo procps psmisc nano less locales tini \
         supervisor \
-        xfce4-session xfwm4 xfdesktop4 xfce4-panel xfce4-settings \
+        xfce4-session xfwm4 xfce4-panel xfce4-settings \
         xfce4-terminal thunar \
         dbus-x11 x11-xserver-utils x11-utils xdg-utils \
         fonts-dejavu-core fonts-liberation \

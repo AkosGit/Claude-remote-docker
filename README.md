@@ -213,6 +213,23 @@ services:
 
 Raise them on a larger host — these suit roughly 6–8 GB of RAM.
 
+### What the image does to stay small
+
+Measured idle, no client connected, before and after:
+
+| | Memory | Idle CPU |
+| --- | --- | --- |
+| Chromium autostarted, compositing on | 715.8 MiB | 2.12% |
+| Current defaults | **488.2 MiB** | **0.19%** |
+
+- **Chromium does not autostart.** It was 417 MiB and nearly all the idle CPU, purely to keep a CDP endpoint warm. Launch it from the panel menu when you want it; the wrapper still exposes CDP on 9222 for Playwright MCP.
+- **Compositing is off.** Shadows and transparency rendered on the CPU, then discarded by VNC encoding.
+- **No `xfdesktop`.** Saves ~37 MB of wallpaper and desktop icons. You lose the desktop right-click menu; the panel menu is unaffected.
+- **Chromium is capped** when it does run: two renderers, one process per site, 512 MB V8 heap.
+- **`shm_size: 512m`, and `--disable-dev-shm-usage` is not used.** That flag saves no memory — it moves shared buffers to `/tmp`, which is the container overlay, i.e. disk.
+
+Two things deliberately not trimmed, because apt says they take the applications with them: `xdg-desktop-portal` is a dependency of `claude-desktop`, and `gcr` of `github-desktop`.
+
 That `shm_size` comment is the trap worth knowing: `/dev/shm` is tmpfs, so it counts against `mem_limit`. Setting `shm_size` larger than the memory limit means Chromium can fill shared memory and trigger the container's own OOM killer.
 
 Verify with `docker inspect claude-vnc-desktop --format '{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}} {{.HostConfig.ShmSize}}'`.

@@ -34,6 +34,11 @@ xfconf-query -c xfwm4 -p /general/zoom_desktop -s false 2>/dev/null
 # reads as "the bottom of the screen is missing" rather than as a hidden panel.
 xfconf-query -c xfce4-panel -p /panels/panel-2/autohide-behavior -s 0 2>/dev/null
 
+# Compositing does shadows and transparency. There is no GPU, so it is done on
+# the CPU, and none of it survives VNC's encoding anyway. Measured: idle CPU
+# 2.12% -> 0.49% with it off.
+xfconf-query -c xfwm4 -p /general/use_compositing -s false 2>/dev/null
+
 mkdir -p "$(dirname "${MARKER}")"
 date -u +"applied %Y-%m-%dT%H:%M:%SZ" > "${MARKER}"
 echo "[xfce-defaults] applied container-appropriate XFCE defaults"

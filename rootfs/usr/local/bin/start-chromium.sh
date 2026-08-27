@@ -7,6 +7,15 @@
 #
 # --no-sandbox: Chromium's own sandbox needs privileges a default container
 # does not have. The container is the isolation boundary here, not the browser.
+#
+# --disable-dev-shm-usage is deliberately NOT passed. It does not reduce memory
+# -- it redirects shared buffers from /dev/shm to /tmp, and /tmp here is the
+# container overlay, i.e. disk. On a host whose symptom is I/O stalls that is
+# exactly the wrong direction, so the buffers stay in RAM and shm_size is sized
+# to hold them instead.
+#
+# The renderer caps bound a runaway tab: at most two renderer processes, one
+# process per site rather than per tab, and a 512MB V8 heap ceiling.
 set -euo pipefail
 
 export DISPLAY=:1
@@ -27,7 +36,9 @@ fi
 
 exec "${BROWSER}" \
     --no-sandbox \
-    --disable-dev-shm-usage \
+    --renderer-process-limit=2 \
+    --process-per-site \
+    --js-flags=--max-old-space-size=512 \
     --disable-gpu \
     --no-first-run \
     --no-default-browser-check \

@@ -6,4 +6,7 @@ services:
     memswap_limit: 4g
     cpus: 2.0
     # Must fit inside mem_limit: /dev/shm is tmpfs and counts as RAM.
-    shm_size: 1gb
+    # Sized to actually hold Chromium's shared buffers, since the image no
+    # longer passes --disable-dev-shm-usage -- that flag pushed them to /tmp,
+    # which is the container overlay, i.e. disk.
+    shm_size: 512m

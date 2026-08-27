@@ -25,7 +25,7 @@ args=(
     -interface 0.0.0.0
     -httpd /usr/share/kasmvnc/www
     -KasmPasswordFile "${HOME}/.kasmpasswd"
-    -FrameRate "${VNC_FRAMERATE:-30}"
+    -FrameRate "${VNC_FRAMERATE:-24}"
     -desktop "claude-vnc-desktop"
     -SecurityTypes None
 )
