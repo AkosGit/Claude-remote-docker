@@ -34,7 +34,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # latter, so removing them uninstalls the applications this image exists for.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg git openssh-client openssl \
-        sudo procps psmisc nano less locales tini tmux \
+        sudo procps psmisc nano less locales tini tmux xz-utils \
         supervisor \
         xfce4-session xfwm4 xfce4-panel xfce4-settings \
         xfce4-terminal thunar \
@@ -109,13 +109,38 @@ RUN set -eux; \
 RUN npm install -g opencode-ai \
     && opencode --version
 
+# --- Intel SDE (Software Development Emulator, amd64 only) ------------------
+# Emulates AVX/AVX2/AVX-512 instructions on x86_64 CPUs that lack them
+# (such as Intel Pentium Silver / Celeron / Atom processors).
+ARG INTEL_SDE_VERSION=10.13.1-2026-07-28
+RUN set -eux; \
+    if [ "${TARGETARCH}" = "amd64" ]; then \
+        url="https://downloadmirror.intel.com/924984/sde-external-${INTEL_SDE_VERSION}-lin.tar.xz"; \
+        mkdir -p /opt/intel-sde; \
+        curl -fsSL "$url" | tar -xJ -C /opt/intel-sde --strip-components=1; \
+        ln -sf /opt/intel-sde/sde64 /usr/local/bin/sde64; \
+        ln -sf /opt/intel-sde/sde /usr/local/bin/sde; \
+        test -x /usr/local/bin/sde64; \
+    fi
+
 # --- Muse CLI ----------------------------------------------------------------
 # Meta's terminal AI coding agent. Installs on both amd64 and arm64.
+# Transparently falls back to Intel SDE emulation on x86_64 CPUs lacking AVX2.
 RUN set -eux; \
     mkdir -p /opt/muse; \
     curl -fsSL https://dev.meta.ai/install.sh | MUSE_INSTALL_DIR=/opt/muse bash; \
     test -x /opt/muse/muse; \
-    ln -sf /opt/muse/muse /usr/local/bin/muse; \
+    printf '%s\n' \
+        '#!/bin/bash' \
+        'set -e' \
+        'if [ "$(uname -m)" = "x86_64" ] && ! grep -q "avx2" /proc/cpuinfo 2>/dev/null; then' \
+        '    if command -v sde64 >/dev/null 2>&1; then' \
+        '        exec sde64 -follow_child -- /opt/muse/muse "$@"' \
+        '    fi' \
+        'fi' \
+        'exec /opt/muse/muse "$@"' \
+        > /usr/local/bin/muse; \
+    chmod 0755 /usr/local/bin/muse; \
     chmod -R a+rX /opt/muse
 
 # --- Antigravity IDE (amd64 only) --------------------------------------------
@@ -318,7 +343,8 @@ COPY rootfs/opt/skel/ /opt/skel/
 # file modes and umask.
 RUN chmod 0755 /usr/local/bin/*.sh /usr/local/bin/restart-browser \
     && chmod -R a+rX /opt/skel /opt/ntfy-mcp /opt/muse \
-    && chown -R 1000:1000 /opt/skel /opt/ntfy-mcp /opt/muse
+    && chown -R 1000:1000 /opt/skel /opt/ntfy-mcp /opt/muse \
+    && if [ -d /opt/intel-sde ]; then chmod -R a+rX /opt/intel-sde; fi
 
 # --- Runtime -----------------------------------------------------------------
 # The whole desktop session runs as this user: KasmVNC, XFCE, and therefore

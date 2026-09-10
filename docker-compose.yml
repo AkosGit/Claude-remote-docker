@@ -64,6 +64,12 @@ services:
     # Reaping zombie processes; tini handles PID 1 duties inside.
     init: false
 
+    # Required for Intel SDE to trace/emulate AVX instructions on non-AVX CPUs
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+
     restart: unless-stopped
 
     healthcheck:
