@@ -34,7 +34,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # latter, so removing them uninstalls the applications this image exists for.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl wget gnupg git openssh-client openssl \
-        sudo procps psmisc nano less locales tini \
+        sudo procps psmisc nano less locales tini tmux \
         supervisor \
         xfce4-session xfwm4 xfce4-panel xfce4-settings \
         xfce4-terminal thunar \
@@ -109,7 +109,16 @@ RUN set -eux; \
 RUN npm install -g opencode-ai \
     && opencode --version
 
-# --- Antigravity (amd64 only) ------------------------------------------------
+# --- Muse CLI ----------------------------------------------------------------
+# Meta's terminal AI coding agent. Installs on both amd64 and arm64.
+RUN set -eux; \
+    mkdir -p /opt/muse; \
+    curl -fsSL https://dev.meta.ai/install.sh | MUSE_INSTALL_DIR=/opt/muse bash; \
+    test -x /opt/muse/muse; \
+    ln -sf /opt/muse/muse /usr/local/bin/muse; \
+    chmod -R a+rX /opt/muse
+
+# --- Antigravity IDE (amd64 only) --------------------------------------------
 # Google publishes no arm64 Linux build -- the arm64 URL is a hard 404 -- so
 # install on amd64 and note the absence
 # on arm64 rather than failing the build.
@@ -141,6 +150,17 @@ RUN set -eux; \
         test -x /opt/antigravity/antigravity; \
         ln -sf /opt/antigravity/bin/antigravity /usr/local/bin/antigravity; \
         echo "$url" > /etc/antigravity-notes; \
+    fi
+
+# --- Antigravity CLI (agy) ---------------------------------------------------
+# Google's terminal AI coding agent. Flat native binary supporting both amd64
+# and arm64. Provides the `agy` command and an `antigravity-cli` alias.
+RUN set -eux; \
+    curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin; \
+    test -x /usr/local/bin/agy; \
+    ln -sf /usr/local/bin/agy /usr/local/bin/antigravity-cli; \
+    if [ ! -e /usr/local/bin/antigravity ]; then \
+        ln -sf /usr/local/bin/agy /usr/local/bin/antigravity; \
     fi
 
 # --- GitHub CLI --------------------------------------------------------------
@@ -297,8 +317,8 @@ COPY rootfs/opt/skel/ /opt/skel/
 # Setting the mode absolutely makes the image independent of the build host's
 # file modes and umask.
 RUN chmod 0755 /usr/local/bin/*.sh /usr/local/bin/restart-browser \
-    && chmod -R a+rX /opt/skel /opt/ntfy-mcp \
-    && chown -R 1000:1000 /opt/skel /opt/ntfy-mcp
+    && chmod -R a+rX /opt/skel /opt/ntfy-mcp /opt/muse \
+    && chown -R 1000:1000 /opt/skel /opt/ntfy-mcp /opt/muse
 
 # --- Runtime -----------------------------------------------------------------
 # The whole desktop session runs as this user: KasmVNC, XFCE, and therefore
